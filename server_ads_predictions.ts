@@ -279,6 +279,7 @@ export const SPONSORS: SponsorConfig[] = [
 
 const CYCLE_MS = 24 * 60 * 60 * 1000;
 const AD_COOLDOWN_MS = 2 * 60 * 1000;
+const TRANSFER_COOLDOWN_MS = 60 * 1000;
 const FRIENDLY_BREAK_LIMIT = 9;
 const STARTER_COINS = 5;
 const RFS_REQUIRED_VIEWS = 30;
@@ -2453,7 +2454,7 @@ function recordNationalAdUsage(ctx: AdServerContext, actorKey: string, blockKey:
   });
 }
 
-function ensureCategoryCooldownMap(db: any, category: 'friendly' | 'interview'): Record<string, number> {
+function ensureCategoryCooldownMap(db: any, category: 'friendly' | 'interview' | 'transfer'): Record<string, number> {
   db.adCooldowns ||= {};
   db.adCooldowns[category] ||= {};
   return db.adCooldowns[category];
@@ -2497,6 +2498,37 @@ export function checkInterviewAdAllowed(
 
 export function recordInterviewAdCooldown(db: any, actorKey: string) {
   const map = ensureCategoryCooldownMap(db, 'interview');
+  map[actorKey] = Date.now();
+}
+
+export function getTransferCooldownSummary(db: any, actorKey: string) {
+  const map = ensureCategoryCooldownMap(db, 'transfer');
+  const now = Date.now();
+  const lastAt = Number(map[actorKey] || 0);
+  const cdLeft = lastAt ? Math.max(0, lastAt + TRANSFER_COOLDOWN_MS - now) : 0;
+  return {
+    cooldownMs: TRANSFER_COOLDOWN_MS,
+    cooldownRemainingMs: cdLeft,
+    nextAvailableAt: cdLeft > 0 ? now + cdLeft : null,
+  };
+}
+
+export function checkTransferAdAllowed(
+  db: any,
+  actorKey: string
+): { ok: true } | { ok: false; error: string } {
+  const cd = getTransferCooldownSummary(db, actorKey);
+  if (cd.cooldownRemainingMs > 0) {
+    return {
+      ok: false,
+      error: `Перерыв между подачей заявок на трансфер: подождите ещё ${fmtCooldownWords(cd.cooldownRemainingMs)}.`,
+    };
+  }
+  return { ok: true };
+}
+
+export function recordTransferAdCooldown(db: any, actorKey: string) {
+  const map = ensureCategoryCooldownMap(db, 'transfer');
   map[actorKey] = Date.now();
 }
 
@@ -3442,6 +3474,9 @@ export function registerAdsAndPredictionsRoutes(app: Express, ctx: AdServerConte
       } else if (blockKey === 'interview_ask') {
         const ivCheck = checkInterviewAdAllowed(db, actor.actorKey);
         if (!ivCheck.ok) return ctx.fail(res, ivCheck.error);
+      } else if (blockKey === 'transfer_request') {
+        const trCheck = checkTransferAdAllowed(db, actor.actorKey);
+        if (!trCheck.ok) return ctx.fail(res, trCheck.error);
       }
     }
 

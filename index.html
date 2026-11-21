@@ -5908,12 +5908,97 @@ function renderEuropeanTransferPanelHtml() {
         </div>
       </div>
 
+      <div data-tr-cd-banner class="warn" style="display:none;margin:10px 0 0"></div>
       <div id="tr_list" style="margin-top:16px;border-top:1px solid #e2e8f0;padding-top:12px"></div>
     </div>
   `;
 }
 
+window.__trCdByClub = window.__trCdByClub || {};
+function getTransferCdClubKey(clubId) {
+  return clubId || CLUB_TID || S.me?.teamId || 'self';
+}
+function setTransferCooldown(clubId, cd) {
+  const k = getTransferCdClubKey(clubId);
+  const rem = Number(cd?.cooldownRemainingMs || 0);
+  const next = Number(cd?.nextAvailableAt || 0) || (rem > 0 ? Date.now() + rem : 0);
+  if (next > Date.now()) window.__trCdByClub[k] = next;
+  else delete window.__trCdByClub[k];
+}
+function getTransferCooldownLeftMs(clubId) {
+  const k = getTransferCdClubKey(clubId);
+  const target = Number(window.__trCdByClub[k] || 0);
+  return target > Date.now() ? target - Date.now() : 0;
+}
+function fmtTrCd(ms) {
+  const s = Math.max(1, Math.ceil(ms / 1000));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
+}
+function syncTransferCooldownUi(clubId) {
+  if (window.__trCdTimer) { clearInterval(window.__trCdTimer); window.__trCdTimer = null; }
+  const k = getTransferCdClubKey(clubId);
+  const getBtns = () => [
+    document.querySelector('#cl_tr_submit'),
+    document.querySelector('#tr_send'),
+    document.querySelector('#tr_batch_send'),
+    ...Array.from(document.querySelectorAll('[data-fa-sign]'))
+  ].filter(Boolean);
+  const getBanners = () => Array.from(document.querySelectorAll('[data-tr-cd-banner]'));
+  const rememberLabels = () => {
+    getBtns().forEach(b => {
+      if (!b.dataset.origLabel) b.dataset.origLabel = b.textContent.trim();
+    });
+  };
+  rememberLabels();
+  const tick = () => {
+    const btns = getBtns();
+    const banners = getBanners();
+    if (!btns.length && !banners.length) {
+      if (window.__trCdTimer) { clearInterval(window.__trCdTimer); window.__trCdTimer = null; }
+      return;
+    }
+    rememberLabels();
+    const rem = getTransferCooldownLeftMs(k);
+    if (rem > 0) {
+      const cdStr = fmtTrCd(rem);
+      btns.forEach(b => {
+        b.disabled = true;
+        b.textContent = `⏳ Перерыв ${cdStr}`;
+      });
+      banners.forEach(el => {
+        el.style.display = 'block';
+        el.textContent = `⏳ Перерыв между подачей заявок на трансфер (1 мин): подождите ${cdStr}`;
+      });
+    } else {
+      if (window.__trCdTimer) { clearInterval(window.__trCdTimer); window.__trCdTimer = null; }
+      delete window.__trCdByClub[k];
+      btns.forEach(b => {
+        if (b.dataset.origLabel && b.textContent.startsWith('⏳ Перерыв')) {
+          b.textContent = b.dataset.origLabel;
+          b.disabled = false;
+        }
+      });
+      banners.forEach(el => {
+        el.style.display = 'none';
+        el.textContent = '';
+      });
+    }
+  };
+  tick();
+  if (getTransferCooldownLeftMs(k) > 0) {
+    window.__trCdTimer = setInterval(tick, 1000);
+  }
+}
+
 async function ensureTransferAdProof(title, subtitle = 'Просмотрите короткую рекламу Adsgram (int-61173) перед отправкой трансферной заявки.') {
+  const cdLeft = getTransferCooldownLeftMs();
+  if (cdLeft > 0) {
+    toast(`Перерыв между заявками на трансфер: подождите ещё ${fmtTrCd(cdLeft)}.`, true);
+    syncTransferCooldownUi();
+    return null;
+  }
   try {
     const ext = await ensureExt();
     const opts = (S.me?.role === 'admin' && CLUB_TID) ? { teamId: CLUB_TID } : undefined;
@@ -6123,7 +6208,8 @@ function setupEuropeanTransferHandlers(app, refreshFn) {
       btnSend.disabled = true;
       const adProof = await ensureTransferAdProof(`Заявка на трансфер: ${pName}`);
       if (!adProof) {
-        btnSend.disabled = false;
+        if (getTransferCooldownLeftMs() > 0) syncTransferCooldownUi();
+        else btnSend.disabled = false;
         return;
       }
       btnSend.textContent = 'Нейросеть обрабатывает…';
@@ -6144,8 +6230,10 @@ function setupEuropeanTransferHandlers(app, refreshFn) {
         sellOnPercent: sellOnVal,
         adProof
       })), 'Заявка отправлена админу на проверку');
-      if (r) refreshFn();
-      else {
+      if (r) {
+        if (r.transferCooldown) setTransferCooldown(CLUB_TID, r.transferCooldown);
+        refreshFn();
+      } else {
         btnSend.disabled = false;
         btnSend.textContent = 'Отправить заявку админу';
       }
@@ -6160,7 +6248,8 @@ function setupEuropeanTransferHandlers(app, refreshFn) {
       btnBatchSend.disabled = true;
       const adProof = await ensureTransferAdProof('Заявки на трансферы из Европы (список)');
       if (!adProof) {
-        btnBatchSend.disabled = false;
+        if (getTransferCooldownLeftMs() > 0) syncTransferCooldownUi();
+        else btnBatchSend.disabled = false;
         return;
       }
       btnBatchSend.textContent = 'Нейросеть обрабатывает список игроков…';
@@ -6168,13 +6257,16 @@ function setupEuropeanTransferHandlers(app, refreshFn) {
         text: textVal,
         adProof
       })), 'Список заявок отправлен админу');
-      if (r) refreshFn();
-      else {
+      if (r) {
+        if (r.transferCooldown) setTransferCooldown(CLUB_TID, r.transferCooldown);
+        refreshFn();
+      } else {
         btnBatchSend.disabled = false;
         btnBatchSend.textContent = 'Отправить весь список админу 🚀';
       }
     };
   }
+  syncTransferCooldownUi();
 }
 
 /* ───────── Статистика команды и игроков (месяц, сезон, всё время) ───────── */
@@ -6769,6 +6861,7 @@ async function pgClub(app) {
     drawChrome();
   }
   const withT = o => S.me.role === 'admin' ? { ...o, teamId: CLUB_TID } : o;
+  setTransferCooldown(c.team.id, c.transferCooldown);
   const isAdmin = S.me?.role === 'admin';
   const logo = c.team.logo || teamLogo(c.team.id);
   const famTeams = Array.isArray(c.familyTeams) && c.familyTeams.length > 1 ? c.familyTeams : [];
@@ -7255,7 +7348,11 @@ async function pgClub(app) {
         if (!adProof) return;
       }
       const r = await act(() => api('/club/squad/add', withT({ playerId: id, register: !!$('#padd_auto_reg')?.checked, ...(adProof ? { adProof } : {}) })));
-      if (r) { toast(r.message || (r.registered ? 'Игрок добавлен в состав и включён в заявку' : 'Игрок добавлен в общий состав')); pgClub(app); }
+      if (r) {
+        if (r.transferCooldown) setTransferCooldown(c.team.id, r.transferCooldown);
+        toast(r.message || (r.registered ? 'Игрок добавлен в состав и включён в заявку' : 'Игрок добавлен в общий состав'));
+        pgClub(app);
+      }
     };
     if ($('#padd')) {
       $('#padd').onclick = async () => {
@@ -8222,10 +8319,12 @@ async function pgClub(app) {
               <option value="ATT">Нападающие (ЛВ / ПВ / ЦФ)</option>
             </select>
           </div>
+          <div data-tr-cd-banner class="warn" style="display:none;margin-bottom:10px"></div>
           <div id="fa_list" class="wrap"><div class="muted small">Загрузка списка свободных агентов…</div></div>
         </div>`;
 
       cb.querySelectorAll('[data-ctt]').forEach(b => b.onclick = () => { CTT = b.dataset.ctt; pgClub(app); });
+      syncTransferCooldownUi(c.team.id);
 
       const loadFreeAgents = async () => {
         const q = $('#fa_q')?.value.trim() || '';
@@ -8263,13 +8362,19 @@ async function pgClub(app) {
             btn.disabled = true;
             const adProof = await ensureTransferAdProof('Заявка на подписание свободного агента');
             if (!adProof) {
-              btn.disabled = false;
+              if (getTransferCooldownLeftMs(c.team.id) > 0) syncTransferCooldownUi(c.team.id);
+              else btn.disabled = false;
               return;
             }
             const resSign = await act(() => api('/club/free-agent/sign', withT({ playerId: btn.dataset.faSign, register: !!$('#fa_auto_reg')?.checked, adProof })));
-            if (resSign) { toast(resSign.message || 'Заявка отправлена админу на одобрение'); pgClub(app); }
+            if (resSign) {
+              if (resSign.transferCooldown) setTransferCooldown(c.team.id, resSign.transferCooldown);
+              toast(resSign.message || 'Заявка отправлена админу на одобрение');
+              pgClub(app);
+            }
             else btn.disabled = false;
           });
+          syncTransferCooldownUi(c.team.id);
         } catch (err) {
           box.innerHTML = `<div class="warn">${e(err.message || 'Ошибка загрузки')}</div>`;
         }
@@ -8391,7 +8496,8 @@ async function pgClub(app) {
 
       <div class="panel">
         <h3>Сделать предложение по игроку РПЛ</h3>
-        <p class="muted small">Найдите футболиста в чемпионате России и направьте предложение клубу-владельцу и администратору лиги с указанием предложенной суммы или условий обмена.</p>
+        <p class="muted small">Найдите футболиста в чемпионате России и направьте предложение клубу-владельцу и администратору лиги с указанием предложенной суммы или условий обмена. Перерыв между подачей заявок — 1 мин.</p>
+        <div data-tr-cd-banner class="warn" style="display:none;margin:8px 0"></div>
         <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-start">
           <div class="sug" style="flex:2;min-width:220px">
             <label class="small muted">Поиск игрока в РПЛ</label>
@@ -8613,7 +8719,8 @@ async function pgClub(app) {
         btnSubmitOffer.disabled = true;
         const adProof = await ensureTransferAdProof('Заявка на трансфер в РПЛ');
         if (!adProof) {
-          btnSubmitOffer.disabled = false;
+          if (getTransferCooldownLeftMs(c.team.id) > 0) syncTransferCooldownUi(c.team.id);
+          else btnSubmitOffer.disabled = false;
           return;
         }
         const r = await act(() => api('/club/squad/add', withT({
@@ -8629,6 +8736,7 @@ async function pgClub(app) {
           adProof
         })));
         if (r) {
+          if (r.transferCooldown) setTransferCooldown(c.team.id, r.transferCooldown);
           toast(r.message || 'Предложение направлено');
           pgClub(app);
         } else {
@@ -8637,6 +8745,7 @@ async function pgClub(app) {
       };
     }
 
+    syncTransferCooldownUi(c.team.id);
     return;
   }
 
