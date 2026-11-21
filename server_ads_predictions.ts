@@ -4,7 +4,7 @@ import crypto from 'crypto';
 export interface AdsgramBlockDef {
   key: string;
   label: string;
-  category: 'sponsors' | 'friendly' | 'predictions' | 'national' | 'interview';
+  category: 'sponsors' | 'friendly' | 'predictions' | 'national' | 'interview' | 'transfers';
   format: 'long' | 'short' | 'banner' | 'click_long';
   durationSec: number;
   requiresClick: boolean;
@@ -212,6 +212,16 @@ export const ADSGRAM_BLOCKS: AdsgramBlockDef[] = [
     requiresClick: false,
     defaultBlockId: 'int-60570',
     maxPerCycle: 50,
+  },
+  {
+    key: 'transfer_request',
+    label: 'Трансферы — Подача заявки на трансфер (РПЛ / Европа / Свободные агенты)',
+    category: 'transfers',
+    format: 'short',
+    durationSec: 5,
+    requiresClick: false,
+    defaultBlockId: 'int-61173',
+    maxPerCycle: 100,
   },
 ];
 
@@ -4789,6 +4799,7 @@ export function registerAdsAndPredictionsRoutes(app: Express, ctx: AdServerConte
         case 'nt_u21_propose_opp': return 'Соперник сборной U21';
         case 'nt_u21_vote_opp': return '+1 голос сопернику U21';
         case 'interview_ask': return 'Вопрос игроку (5/матч)';
+        case 'transfer_request': return 'Заявка на трансфер';
         default: return '—';
       }
     };

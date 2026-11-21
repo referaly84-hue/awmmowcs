@@ -5913,6 +5913,18 @@ function renderEuropeanTransferPanelHtml() {
   `;
 }
 
+async function ensureTransferAdProof(title, subtitle = 'Просмотрите короткую рекламу Adsgram (int-61173) перед отправкой трансферной заявки.') {
+  try {
+    const ext = await ensureExt();
+    const opts = (S.me?.role === 'admin' && CLUB_TID) ? { teamId: CLUB_TID } : undefined;
+    const adRes = await ext.runAdsgramBlock('transfer_request', title, subtitle, opts);
+    return adRes?.adProof || null;
+  } catch (err) {
+    toast(err?.message || 'Не удалось запустить рекламу Adsgram', true);
+    return null;
+  }
+}
+
 function setupEuropeanTransferHandlers(app, refreshFn) {
   const withT = o => S.me?.role === 'admin' ? { ...o, teamId: CLUB_TID } : o;
   const tabSingle = $('#tr_tab_single');
@@ -6109,6 +6121,11 @@ function setupEuropeanTransferHandlers(app, refreshFn) {
       if (!pCountry) return toast('Укажите страну игрока');
       if (!pClub) return toast('Укажите текущий клуб игрока');
       btnSend.disabled = true;
+      const adProof = await ensureTransferAdProof(`Заявка на трансфер: ${pName}`);
+      if (!adProof) {
+        btnSend.disabled = false;
+        return;
+      }
       btnSend.textContent = 'Нейросеть обрабатывает…';
       const isLnReq = isMand || trType === 'loan';
       const loanUntilVal = isLnReq ? ($('#tr_loan_until')?.value?.trim() || defaultLoanUntil(trType)) : undefined;
@@ -6124,7 +6141,8 @@ function setupEuropeanTransferHandlers(app, refreshFn) {
         mandatoryBuyout: isMand,
         buyoutFee: buyoutFeeVal,
         loanCondition: loanCondVal,
-        sellOnPercent: sellOnVal
+        sellOnPercent: sellOnVal,
+        adProof
       })), 'Заявка отправлена админу на проверку');
       if (r) refreshFn();
       else {
@@ -6140,9 +6158,15 @@ function setupEuropeanTransferHandlers(app, refreshFn) {
       const textVal = $('#tr_batch_text')?.value?.trim();
       if (!textVal) return toast('Введите хотя бы одного игрока в список');
       btnBatchSend.disabled = true;
+      const adProof = await ensureTransferAdProof('Заявки на трансферы из Европы (список)');
+      if (!adProof) {
+        btnBatchSend.disabled = false;
+        return;
+      }
       btnBatchSend.textContent = 'Нейросеть обрабатывает список игроков…';
       const r = await act(() => api('/club/transfer-request', withT({
-        text: textVal
+        text: textVal,
+        adProof
       })), 'Список заявок отправлен админу');
       if (r) refreshFn();
       else {
@@ -7214,15 +7238,23 @@ async function pgClub(app) {
         if (v.length < 2) return $('#pl').hidden = true;
         const r = await api('/players/search?q=' + encodeURIComponent(v));
         $('#pl').hidden = !r.length;
-        $('#pl').innerHTML = r.map(p => `<div data-id="${p.id}">${e(p.name)} <span class="muted small">${p.pos} · ${e(p.team)}</span></div>`).join('');
+        $('#pl').innerHTML = r.map(p => `<div data-id="${p.id}" data-tid="${e(p.teamId || '')}">${e(p.name)} <span class="muted small">${p.pos} · ${e(p.team)}</span></div>`).join('');
       }, 220);
     };
 
     $('#pl').onclick = async ev => {
-      const id = ev.target.closest('[data-id]')?.dataset.id;
+      const row = ev.target.closest('[data-id]');
+      const id = row?.dataset.id;
       if (!id) return;
       $('#pl').hidden = true;
-      const r = await act(() => api('/club/squad/add', withT({ playerId: id, register: !!$('#padd_auto_reg')?.checked })));
+      let adProof;
+      const pTid = row.dataset.tid || '';
+      const famIds = new Set([c.team.id, ...(famTeams || []).map(x => x.id)]);
+      if (S.me?.role !== 'admin' && pTid && !famIds.has(pTid)) {
+        adProof = await ensureTransferAdProof('Заявка на трансфер игрока');
+        if (!adProof) return;
+      }
+      const r = await act(() => api('/club/squad/add', withT({ playerId: id, register: !!$('#padd_auto_reg')?.checked, ...(adProof ? { adProof } : {}) })));
       if (r) { toast(r.message || (r.registered ? 'Игрок добавлен в состав и включён в заявку' : 'Игрок добавлен в общий состав')); pgClub(app); }
     };
     if ($('#padd')) {
@@ -8228,8 +8260,15 @@ async function pgClub(app) {
             }).join('')}
           </tbody></table>`;
           box.querySelectorAll('[data-fa-sign]').forEach(btn => btn.onclick = async () => {
-            const resSign = await act(() => api('/club/free-agent/sign', withT({ playerId: btn.dataset.faSign, register: !!$('#fa_auto_reg')?.checked })));
+            btn.disabled = true;
+            const adProof = await ensureTransferAdProof('Заявка на подписание свободного агента');
+            if (!adProof) {
+              btn.disabled = false;
+              return;
+            }
+            const resSign = await act(() => api('/club/free-agent/sign', withT({ playerId: btn.dataset.faSign, register: !!$('#fa_auto_reg')?.checked, adProof })));
             if (resSign) { toast(resSign.message || 'Заявка отправлена админу на одобрение'); pgClub(app); }
+            else btn.disabled = false;
           });
         } catch (err) {
           box.innerHTML = `<div class="warn">${e(err.message || 'Ошибка загрузки')}</div>`;
@@ -8571,6 +8610,12 @@ async function pgClub(app) {
 
         const isClLoan = typeVal.includes('loan') || mandatoryBuyout;
         const clLoanUntil = isClLoan ? ($('#cl_tr_loan_until')?.value?.trim() || defaultLoanUntil(typeVal)) : undefined;
+        btnSubmitOffer.disabled = true;
+        const adProof = await ensureTransferAdProof('Заявка на трансфер в РПЛ');
+        if (!adProof) {
+          btnSubmitOffer.disabled = false;
+          return;
+        }
         const r = await act(() => api('/club/squad/add', withT({
           playerId: trSelectedPid,
           fee: feeVal,
@@ -8580,11 +8625,14 @@ async function pgClub(app) {
           mandatoryBuyout,
           buyoutFee,
           loanCondition,
-          sellOnPercent
+          sellOnPercent,
+          adProof
         })));
         if (r) {
           toast(r.message || 'Предложение направлено');
           pgClub(app);
+        } else {
+          btnSubmitOffer.disabled = false;
         }
       };
     }

@@ -18245,6 +18245,8 @@ app.post("/api/club/squad/add", needClub, async (req, res) => {
           return fail(res, "\u0418\u0433\u0440\u043E\u043A \u0434\u043B\u044F \u043E\u0431\u043C\u0435\u043D\u0430 \u0434\u043E\u043B\u0436\u0435\u043D \u0431\u044B\u0442\u044C \u0438\u0437 \u0441\u043E\u0441\u0442\u0430\u0432\u0430 \u0432\u0430\u0448\u0435\u0433\u043E \u043A\u043B\u0443\u0431\u0430");
         }
       }
+      const vAd = verifyAndConsumeAdProof(req.body?.adProof, "transfer_request", resolveActor(req).actorKey, false, req.me?.role);
+      if (!vAd.ok) return fail(res, vAd.error);
       const rawTransferType = String(req.body.transferType || req.body.type || "");
       const gameNow = getCurrentGameDate();
       const resolvedLoanUntil = isLoan ? computeLoanUntil({ transferType: rawTransferType, loanUntil: req.body.loanUntil, baseDate: gameNow }) : null;
@@ -18901,6 +18903,8 @@ app.post("/api/club/free-agent/sign", needClub, (req, res) => {
   if (dup) {
     return fail(res, `Заявка на подписание свободного агента ${p.name} уже отправлена и ожидает одобрения администратора`);
   }
+  const vAd = verifyAndConsumeAdProof(req.body?.adProof, "transfer_request", resolveActor(req).actorKey, false, req.me?.role);
+  if (!vAd.ok) return fail(res, vAd.error);
   const prevClub = p.formerClub || "Свободный агент";
   const trObj = {
     id: uid(),
@@ -23318,6 +23322,8 @@ app.post("/api/club/transfer-request", needClub, async (req, res) => {
   if (!itemsToProcess.length) {
     return fail(res, "Укажите ФИО игрока, позицию, возраст, страну, клуб и цену (или введите список игроков)");
   }
+  const vAd = verifyAndConsumeAdProof(req.body?.adProof, "transfer_request", resolveActor(req).actorKey, false, req.me?.role);
+  if (!vAd.ok) return fail(res, vAd.error);
   const createdRequests = [];
   const gameNowEuro = getCurrentGameDate();
   for (const item of itemsToProcess) {

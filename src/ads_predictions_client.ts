@@ -3330,6 +3330,7 @@ function catLabelRu(cat: string): string {
     case 'predictions': return 'Лига прогнозов';
     case 'national': return 'Сборная России';
     case 'interview': return 'Интервью';
+    case 'transfers': return 'Трансферы';
     default: return cat;
   }
 }
@@ -3793,7 +3794,7 @@ export async function renderAdminAdsTab(ab: HTMLElement, ov: any, _reloadAdmin: 
     } else if (ADM_ADS_SUBTAB === 'settings') {
       const defs: any[] = cfg.defs || [];
       const blocksMap = cfg.blocks || {};
-      const categories = ['sponsors', 'predictions', 'friendly', 'national', 'interview'];
+      const categories = ['sponsors', 'predictions', 'friendly', 'national', 'interview', 'transfers'];
 
       bodyHtml = `
         <div class="panel">
