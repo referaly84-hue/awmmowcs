@@ -1,33 +1,5 @@
 // @ts-nocheck
-var __defProp = Object.defineProperty;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-};
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-
-// firebase_auth.ts
-var firebase_auth_exports = {};
-__export(firebase_auth_exports, {
-  FIREBASE_HARDCODED: () => FIREBASE_HARDCODED,
-  fbActive: () => fbActive,
-  fbDeleteSession: () => fbDeleteSession,
-  fbFlush: () => fbFlush,
-  fbInit: () => fbInit,
-  fbLoadState: () => fbLoadState,
-  fbQueueMatch: () => fbQueueMatch,
-  fbQueueState: () => fbQueueState,
-  fbRestoreMatches: () => fbRestoreMatches,
-  fbSaveSession: () => fbSaveSession,
-  fbSyncCodes: () => fbSyncCodes
-});
-import fs from "fs";
-import zlib from "zlib";
 import crypto2 from "crypto";
-import path from "path";
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import {
   COMMENTATORS,
@@ -87,218 +59,6 @@ function resolveGeminiModel(rawModel) {
   if (/^gemini-(?:1\.|2\.0|3\.1-flash$|3\.8(?:-flash)?$)|^gemini-pro$/i.test(m)) return DEFAULT_GEMINI_PRIMARY_MODEL;
   return m;
 }
-function readServiceAccount() {
-  try {
-    if (process.env.FIREBASE_SERVICE_ACCOUNT) return JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    if (process.env.FIREBASE_SERVICE_ACCOUNT_FILE) return JSON.parse(fs.readFileSync(process.env.FIREBASE_SERVICE_ACCOUNT_FILE, "utf8"));
-    if (FIREBASE_HARDCODED.serviceAccount) return FIREBASE_HARDCODED.serviceAccount;
-    if (fs.existsSync("./firebase-service-account.json")) return JSON.parse(fs.readFileSync("./firebase-service-account.json", "utf8"));
-  } catch (e) {
-    console.error("Firebase: \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u043A\u043B\u044E\u0447 \u0441\u0435\u0440\u0432\u0438\u0441\u043D\u043E\u0433\u043E \u0430\u043A\u043A\u0430\u0443\u043D\u0442\u0430:", e.message);
-  }
-  return null;
-}
-async function fbInit(seed2) {
-  const sa = readServiceAccount();
-  if (!sa) {
-    console.log("Firebase: \u043A\u043B\u044E\u0447 \u043D\u0435 \u0437\u0430\u0434\u0430\u043D \u2014 \u043A\u043E\u0434\u044B \u0445\u0440\u0430\u043D\u044F\u0442\u0441\u044F \u0432 club_codes.json");
-    return null;
-  }
-  try {
-    const { initializeApp, cert, getApps } = await import("firebase-admin/app");
-    const { getFirestore } = await import("firebase-admin/firestore");
-    if (!getApps().length) initializeApp({ credential: cert(sa) });
-    fs_db = getFirestore();
-    const [adminDoc, clubSnap, sessSnap] = await Promise.all([
-      fs_db.collection("auth").doc("admin").get(),
-      fs_db.collection("clubCodes").get(),
-      fs_db.collection("sessions").get()
-    ]);
-    const snap = { admin: adminDoc.exists ? adminDoc.data().code : void 0, clubs: {}, sessions: {} };
-    clubSnap.forEach((d) => {
-      const v = d.data();
-      if (v?.name && v?.code) snap.clubs[v.name] = v.code;
-    });
-    sessSnap.forEach((d) => {
-      snap.sessions[d.id] = d.data();
-    });
-    if (!snap.admin && !Object.keys(snap.clubs).length && (seed2.admin || Object.keys(seed2.clubs).length)) {
-      snap.admin = seed2.admin;
-      snap.clubs = { ...seed2.clubs };
-      await writeAll(snap);
-      console.log(`Firebase: \u043F\u0435\u0440\u0435\u043D\u0435\u0441\u0435\u043D\u043E \u043A\u043E\u0434\u043E\u0432 \u043A\u043B\u0443\u0431\u043E\u0432: ${Object.keys(snap.clubs).length}`);
-    }
-    synced.admin = snap.admin;
-    for (const [n, c] of Object.entries(snap.clubs)) synced.clubs.set(n, c);
-    fbActive = true;
-    console.log(`Firebase: \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u043E (\u043A\u043B\u0443\u0431\u043E\u0432: ${Object.keys(snap.clubs).length}, \u0441\u0435\u0441\u0441\u0438\u0439: ${Object.keys(snap.sessions).length})`);
-    return snap;
-  } catch (e) {
-    console.error("Firebase: \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0438\u0442\u044C\u0441\u044F, \u0440\u0430\u0431\u043E\u0442\u0430\u044E \u0441 club_codes.json:", e.message);
-    fs_db = null;
-    fbActive = false;
-    return null;
-  }
-}
-async function writeAll(snap) {
-  const entries = Object.entries(snap.clubs);
-  for (let i = 0; i < entries.length; i += 400) {
-    const b = fs_db.batch();
-    for (const [name, code] of entries.slice(i, i + 400)) b.set(fs_db.collection("clubCodes").doc(clubId(name)), { name, code });
-    if (i === 0 && snap.admin) b.set(fs_db.collection("auth").doc("admin"), { code: snap.admin });
-    await b.commit();
-  }
-  if (!entries.length && snap.admin) await fs_db.collection("auth").doc("admin").set({ code: snap.admin });
-}
-function fbSyncCodes(reg) {
-  if (!fbActive) return;
-  const changed = {};
-  for (const [n, c] of Object.entries(reg.clubs)) if (synced.clubs.get(n) !== c) changed[n] = c;
-  const adminChanged = reg.admin && reg.admin !== synced.admin;
-  if (!Object.keys(changed).length && !adminChanged) return;
-  for (const [n, c] of Object.entries(changed)) synced.clubs.set(n, c);
-  if (adminChanged) synced.admin = reg.admin;
-  writeAll({ admin: adminChanged ? reg.admin : void 0, clubs: changed }).catch((e) => console.error("Firebase: \u0437\u0430\u043F\u0438\u0441\u044C \u043A\u043E\u0434\u043E\u0432:", e.message));
-}
-function fbSaveSession(token, s) {
-  if (!fbActive) return;
-  fs_db.collection("sessions").doc(token).set(JSON.parse(JSON.stringify(s))).catch((e) => console.error("Firebase: \u0437\u0430\u043F\u0438\u0441\u044C \u0441\u0435\u0441\u0441\u0438\u0438:", e.message));
-}
-function fbDeleteSession(token) {
-  if (!fbActive) return;
-  fs_db.collection("sessions").doc(token).delete().catch((e) => console.error("Firebase: \u0443\u0434\u0430\u043B\u0435\u043D\u0438\u0435 \u0441\u0435\u0441\u0441\u0438\u0438:", e.message));
-}
-async function fbLoadState() {
-  if (!fbActive) return null;
-  try {
-    const metaDoc = await fs_db.collection("appState").doc("meta").get();
-    if (!metaDoc.exists) return null;
-    const meta = metaDoc.data();
-    const parts = [];
-    for (let i = 0; i < meta.chunks; i++) {
-      const d = await fs_db.collection("appState").doc("chunk_" + i).get();
-      if (!d.exists) throw new Error("\u043D\u0435\u0442 \u043A\u0443\u0441\u043A\u0430 " + i);
-      parts.push(d.data().data);
-    }
-    const json = zlib.gunzipSync(Buffer.from(parts.join(""), "base64")).toString("utf8");
-    lastStateHash = meta.hash || "";
-    console.log(`Firebase: \u0431\u0430\u0437\u0430 \u0432\u043E\u0441\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u0430 \u0438\u0437 \u043E\u0431\u043B\u0430\u043A\u0430 (${(json.length / 1024).toFixed(0)} \u041A\u0411)`);
-    return { savedAt: Number(meta.savedAt) || 0, json };
-  } catch (e) {
-    console.error("Firebase: \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0431\u0430\u0437\u0443:", e.message);
-    return null;
-  }
-}
-async function writeState(json, savedAt) {
-  const hash = crypto2.createHash("md5").update(json).digest("hex");
-  if (hash === lastStateHash) return;
-  const b64 = zlib.gzipSync(Buffer.from(json, "utf8")).toString("base64");
-  const n = Math.ceil(b64.length / CHUNK);
-  const oldMeta = await fs_db.collection("appState").doc("meta").get();
-  const oldN = oldMeta.exists ? oldMeta.data().chunks || 0 : 0;
-  for (let i = 0; i < n; i++) await fs_db.collection("appState").doc("chunk_" + i).set({ data: b64.slice(i * CHUNK, (i + 1) * CHUNK) });
-  await fs_db.collection("appState").doc("meta").set({ savedAt, chunks: n, hash });
-  for (let i = n; i < oldN; i++) await fs_db.collection("appState").doc("chunk_" + i).delete().catch(() => {
-  });
-  lastStateHash = hash;
-}
-function fbQueueState(getJson) {
-  if (!fbActive) return;
-  pendingState = getJson;
-  if (stateTimer2) return;
-  stateTimer2 = setTimeout(async () => {
-    stateTimer2 = null;
-    const g = pendingState;
-    pendingState = null;
-    if (!g) return;
-    try {
-      await writeState(g(), Date.now());
-    } catch (e) {
-      console.error("Firebase: \u0437\u0430\u043F\u0438\u0441\u044C \u0431\u0430\u0437\u044B:", e.message);
-    }
-  }, 8e3);
-}
-function fbQueueMatch(id, getJson) {
-  if (!fbActive) return;
-  pendingMatches2.set(id, getJson);
-  if (matchTimers2.has(id)) return;
-  matchTimers2.set(id, setTimeout(async () => {
-    matchTimers2.delete(id);
-    const g = pendingMatches2.get(id);
-    pendingMatches2.delete(id);
-    if (!g) return;
-    try {
-      const b64 = zlib.gzipSync(Buffer.from(g(), "utf8")).toString("base64");
-      if (b64.length > CHUNK) {
-        console.error(`Firebase: \u043C\u0430\u0442\u0447 ${id} \u0441\u043B\u0438\u0448\u043A\u043E\u043C \u0431\u043E\u043B\u044C\u0448\u043E\u0439 \u0434\u043B\u044F Firestore`);
-        return;
-      }
-      await fs_db.collection("matches").doc(id).set({ data: b64 });
-    } catch (e) {
-      console.error("Firebase: \u0437\u0430\u043F\u0438\u0441\u044C \u043C\u0430\u0442\u0447\u0430:", e.message);
-    }
-  }, 8e3));
-}
-async function fbRestoreMatches(dir) {
-  if (!fbActive) return;
-  try {
-    const snap = await fs_db.collection("matches").get();
-    let n = 0;
-    snap.forEach((d) => {
-      const f = path.join(dir, d.id + ".json");
-      if (fs.existsSync(f)) return;
-      try {
-        fs.writeFileSync(f, zlib.gunzipSync(Buffer.from(d.data().data, "base64")));
-        n++;
-      } catch {
-      }
-    });
-    if (n) console.log(`Firebase: \u0432\u043E\u0441\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E \u043C\u0430\u0442\u0447\u0435\u0439: ${n}`);
-  } catch (e) {
-    console.error("Firebase: \u0432\u043E\u0441\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 \u043C\u0430\u0442\u0447\u0435\u0439:", e.message);
-  }
-}
-async function fbFlush(getJson) {
-  if (!fbActive) return;
-  try {
-    if (stateTimer2) {
-      clearTimeout(stateTimer2);
-      stateTimer2 = null;
-    }
-    const g = getJson || pendingState;
-    pendingState = null;
-    if (g) await writeState(g(), Date.now());
-    for (const [id, t] of matchTimers2) {
-      clearTimeout(t);
-      matchTimers2.delete(id);
-    }
-    for (const [id, g2] of pendingMatches2) {
-      pendingMatches2.delete(id);
-      const b64 = zlib.gzipSync(Buffer.from(g2(), "utf8")).toString("base64");
-      if (b64.length <= CHUNK) await fs_db.collection("matches").doc(id).set({ data: b64 });
-    }
-  } catch (e) {
-    console.error("Firebase: \u0444\u0438\u043D\u0430\u043B\u044C\u043D\u0430\u044F \u0437\u0430\u043F\u0438\u0441\u044C:", e.message);
-  }
-}
-var FIREBASE_HARDCODED, fs_db, fbActive, clubId, synced, CHUNK, stateTimer2, pendingState, lastStateHash, matchTimers2, pendingMatches2;
-var init_firebase_auth = __esm({
-  "firebase_auth.ts"() {
-    FIREBASE_HARDCODED = {
-      serviceAccount: null
-    };
-    fs_db = null;
-    fbActive = false;
-    clubId = (name) => encodeURIComponent(String(name)).replace(/\./g, "%2E") || "_";
-    synced = { admin: void 0, clubs: /* @__PURE__ */ new Map() };
-    CHUNK = 9e5;
-    stateTimer2 = null;
-    pendingState = null;
-    lastStateHash = "";
-    matchTimers2 = /* @__PURE__ */ new Map();
-    pendingMatches2 = /* @__PURE__ */ new Map();
-  }
-});
 
 // server.ts
 import express from "express";
@@ -2096,7 +1856,6 @@ async function pgFlush(get) {
 
 // pg_migrate.ts
 import fs2 from "fs";
-import os from "os";
 import path2 from "path";
 function readJson(file) {
   try {
@@ -2122,64 +1881,17 @@ function readMatchDir(dir) {
 }
 async function collectLegacy(opts) {
   const useFiles = opts.useFiles !== false;
-  const useFs = opts.useFirestore !== false && process.env.MIGRATE_FIRESTORE !== "0";
-  const localDb = useFiles ? readJson(path2.join(opts.dataDir, "db.json")) : null;
-  const localMatches = useFiles ? readMatchDir(path2.join(opts.dataDir, "matches")) : /* @__PURE__ */ new Map();
-  const localCodesRaw = useFiles ? readJson(opts.codesFile) : null;
-  const localCodes = {
+  if (!useFiles) return null;
+  const db2 = readJson(path2.join(opts.dataDir, "db.json"));
+  if (!db2) return null;
+  const matches = readMatchDir(path2.join(opts.dataDir, "matches"));
+  const localCodesRaw = readJson(opts.codesFile);
+  const codes = {
     admin: localCodesRaw?.admin,
     clubs: localCodesRaw?.clubs && typeof localCodesRaw.clubs === "object" ? localCodesRaw.clubs : {}
   };
-  let remoteDb = null;
-  let remoteMatches = /* @__PURE__ */ new Map();
-  let remoteCodes = { clubs: {} };
-  let remoteSessions = {};
-  let remoteAt = 0;
-  if (useFs) {
-    try {
-      const fb = await Promise.resolve().then(() => (init_firebase_auth(), firebase_auth_exports));
-      const snap = await fb.fbInit({ clubs: {} });
-      if (snap) {
-        remoteCodes = { admin: snap.admin, clubs: snap.clubs || {} };
-        remoteSessions = snap.sessions || {};
-        const st = await fb.fbLoadState();
-        if (st) {
-          try {
-            remoteDb = JSON.parse(st.json);
-            remoteAt = st.savedAt || remoteDb?._savedAt || 0;
-          } catch {
-          }
-        }
-        const tmp = fs2.mkdtempSync(path2.join(os.tmpdir(), "virt-matches-"));
-        try {
-          await fb.fbRestoreMatches(tmp);
-          remoteMatches = readMatchDir(tmp);
-        } finally {
-          fs2.rmSync(tmp, { recursive: true, force: true });
-        }
-      }
-    } catch (e) {
-      console.error("\u041C\u0438\u0433\u0440\u0430\u0446\u0438\u044F: Firestore \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D, \u0431\u0435\u0440\u0443 \u0442\u043E\u043B\u044C\u043A\u043E \u043B\u043E\u043A\u0430\u043B\u044C\u043D\u044B\u0435 \u0444\u0430\u0439\u043B\u044B:", e.message);
-    }
-  }
-  if (!localDb && !remoteDb) return null;
-  const localAt = Number(localDb?._savedAt) || 0;
-  const useRemote = !!remoteDb && (!localDb || remoteAt > localAt);
-  const db2 = useRemote ? remoteDb : localDb;
-  const matches = /* @__PURE__ */ new Map();
-  const first = useRemote ? remoteMatches : localMatches;
-  const second = useRemote ? localMatches : remoteMatches;
-  for (const [id, m] of second) matches.set(id, m);
-  for (const [id, m] of first) matches.set(id, m);
-  const codes = {
-    admin: remoteCodes.admin || localCodes.admin,
-    clubs: { ...localCodes.clubs, ...remoteCodes.clubs }
-  };
-  const parts = [];
-  parts.push(useRemote ? `Firestore (\u0431\u0430\u0437\u0430 \u043E\u0442 ${new Date(remoteAt).toISOString()})` : "\u043B\u043E\u043A\u0430\u043B\u044C\u043D\u044B\u0439 data/db.json");
-  if (useRemote && localDb) parts.push("\u043B\u043E\u043A\u0430\u043B\u044C\u043D\u044B\u0439 db.json \u0441\u0442\u0430\u0440\u0448\u0435 \u043E\u0431\u043B\u0430\u0447\u043D\u043E\u0433\u043E \u2014 \u043D\u0435 \u0438\u0441\u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u043D");
-  const sessions = Object.keys(remoteSessions).length ? remoteSessions : db2?.sessions && typeof db2.sessions === "object" ? db2.sessions : {};
-  return { db: db2, matches, codes, sessions, source: parts.join("; ") };
+  const sessions = db2?.sessions && typeof db2.sessions === "object" ? db2.sessions : {};
+  return { db: db2, matches, codes, sessions, source: "\u043B\u043E\u043A\u0430\u043B\u044C\u043D\u044B\u0439 data/db.json" };
 }
 
 // src/squad_import.ts
@@ -20609,7 +20321,7 @@ app.post("/api/admin/budget/award-prizes", admin, (req, res) => {
   }
   if (usePg) {
     if (!await pgHasData()) {
-      console.log("PostgreSQL: \u0431\u0430\u0437\u0430 \u043F\u0443\u0441\u0442\u0430 \u2014 \u043F\u0435\u0440\u0435\u043D\u043E\u0448\u0443 \u0434\u0430\u043D\u043D\u044B\u0435 \u0438\u0437 Firestore \u0438 \u043B\u043E\u043A\u0430\u043B\u044C\u043D\u044B\u0445 \u0444\u0430\u0439\u043B\u043E\u0432\u2026");
+      console.log("PostgreSQL: \u0431\u0430\u0437\u0430 \u043F\u0443\u0441\u0442\u0430 \u2014 \u043F\u0435\u0440\u0435\u043D\u043E\u0448\u0443 \u0434\u0430\u043D\u043D\u044B\u0435 \u0438\u0437 \u043B\u043E\u043A\u0430\u043B\u044C\u043D\u044B\u0445 \u0444\u0430\u0439\u043B\u043E\u0432\u2026");
       const legacy = await collectLegacy({ dataDir: DATA_DIR, codesFile: CODES_FILE });
       if (legacy) {
         const r = await pgImportAll(legacy);
