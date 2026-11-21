@@ -1706,6 +1706,7 @@ interface PendingAdSession {
   verifiedAt?: number;
   s2sConfirmed?: boolean;
   consumed: boolean;
+  isAdminTest?: boolean;
 }
 
 const adSessions = new Map<string, PendingAdSession>();
@@ -2521,7 +2522,7 @@ export function checkTransferAdAllowed(
   if (cd.cooldownRemainingMs > 0) {
     return {
       ok: false,
-      error: `Перерыв между подачей заявок на трансфер: подождите ещё ${fmtCooldownWords(cd.cooldownRemainingMs)}.`,
+      error: `Перерыв на рекламу: подождите ещё ${fmtCooldownWords(cd.cooldownRemainingMs)}.`,
     };
   }
   return { ok: true };
@@ -3502,6 +3503,7 @@ export function registerAdsAndPredictionsRoutes(app: Express, ctx: AdServerConte
       verified: false,
       s2sConfirmed: false,
       consumed: false,
+      isAdminTest,
     });
     getMemBlockCounter(blockKey).started += 1;
     pushAdEvent(ctx, {
@@ -3664,9 +3666,23 @@ export function registerAdsAndPredictionsRoutes(app: Express, ctx: AdServerConte
       }
     }
 
+    if (s.blockKey === 'transfer_request' && !s.isAdminTest) {
+      const trCd = checkTransferAdAllowed(db, s.actorKey);
+      if (!trCd.ok) {
+        adSessions.delete(token);
+        return ctx.fail(res, trCd.error);
+      }
+    }
+
     s.clicked = clicked;
     s.verified = true;
     s.verifiedAt = Date.now();
+    let cooldown: any = null;
+    if (s.blockKey === 'transfer_request' && !s.isAdminTest) {
+      recordTransferAdCooldown(db, s.actorKey);
+      cooldown = getTransferCooldownSummary(db, s.actorKey);
+      ctx.save();
+    }
     getMemBlockCounter(s.blockKey).completed += 1;
     const dbStat = ensureDbAdStat(db, s.blockKey);
     dbStat.completed = Number(dbStat.completed || 0) + 1;
@@ -3680,7 +3696,7 @@ export function registerAdsAndPredictionsRoutes(app: Express, ctx: AdServerConte
       durationMs,
       detail: `Просмотр подтверждён (${Math.round(durationMs / 100) / 10}с${s.s2sConfirmed ? ' · S2S OK' : ''})`,
     });
-    res.json({ ok: 1, adProof: token, blockKey: s.blockKey, clicked: s.clicked });
+    res.json({ ok: 1, adProof: token, blockKey: s.blockKey, clicked: s.clicked, ...(cooldown ? { cooldown } : {}) });
   });
 
   const handleSdkS2SReward = (req: any, res: Response) => {

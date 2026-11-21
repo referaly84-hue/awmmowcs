@@ -316,7 +316,6 @@ import {
   checkAndConsumeFriendlyAcceptAd,
   checkAndConsumeFriendlyRequestAd,
   checkInterviewAdAllowed,
-  checkTransferAdAllowed,
   ensureOwnerProfile,
   getAdsgramBlocks,
   getFriendlyBreakUsage,
@@ -18250,8 +18249,6 @@ app.post("/api/club/squad/add", needClub, async (req, res) => {
         }
       }
       const trActor = resolveActor(req);
-      const trCdCheck = checkTransferAdAllowed(db, trActor.actorKey);
-      if (!trCdCheck.ok) return fail(res, trCdCheck.error);
       const vAd = verifyAndConsumeAdProof(req.body?.adProof, "transfer_request", trActor.actorKey, false, req.me?.role);
       if (!vAd.ok) return fail(res, vAd.error);
       const rawTransferType = String(req.body.transferType || req.body.type || "");
@@ -18296,7 +18293,9 @@ app.post("/api/club/squad/add", needClub, async (req, res) => {
         at: Date.now()
       };
       db.transfers.unshift(trObj);
-      recordTransferAdCooldown(db, trActor.actorKey);
+      if (!getTransferCooldownSummary(db, trActor.actorKey).cooldownRemainingMs) {
+        recordTransferAdCooldown(db, trActor.actorKey);
+      }
       save();
       return res.json({
         pending: 1,
@@ -18913,8 +18912,6 @@ app.post("/api/club/free-agent/sign", needClub, (req, res) => {
     return fail(res, `Заявка на подписание свободного агента ${p.name} уже отправлена и ожидает одобрения администратора`);
   }
   const trActor = resolveActor(req);
-  const trCdCheck = checkTransferAdAllowed(db, trActor.actorKey);
-  if (!trCdCheck.ok) return fail(res, trCdCheck.error);
   const vAd = verifyAndConsumeAdProof(req.body?.adProof, "transfer_request", trActor.actorKey, false, req.me?.role);
   if (!vAd.ok) return fail(res, vAd.error);
   const prevClub = p.formerClub || "Свободный агент";
@@ -18942,7 +18939,9 @@ app.post("/api/club/free-agent/sign", needClub, (req, res) => {
     at: Date.now()
   };
   db.transfers.unshift(trObj);
-  recordTransferAdCooldown(db, trActor.actorKey);
+  if (!getTransferCooldownSummary(db, trActor.actorKey).cooldownRemainingMs) {
+    recordTransferAdCooldown(db, trActor.actorKey);
+  }
   save();
   res.json({
     ok: 1,
@@ -23337,8 +23336,6 @@ app.post("/api/club/transfer-request", needClub, async (req, res) => {
     return fail(res, "Укажите ФИО игрока, позицию, возраст, страну, клуб и цену (или введите список игроков)");
   }
   const trActor = resolveActor(req);
-  const trCdCheck = checkTransferAdAllowed(db, trActor.actorKey);
-  if (!trCdCheck.ok) return fail(res, trCdCheck.error);
   const vAd = verifyAndConsumeAdProof(req.body?.adProof, "transfer_request", trActor.actorKey, false, req.me?.role);
   if (!vAd.ok) return fail(res, vAd.error);
   const createdRequests = [];
@@ -23381,7 +23378,9 @@ app.post("/api/club/transfer-request", needClub, async (req, res) => {
     db.transferRequests.unshift(reqObj);
     createdRequests.push(reqObj);
   }
-  recordTransferAdCooldown(db, trActor.actorKey);
+  if (!getTransferCooldownSummary(db, trActor.actorKey).cooldownRemainingMs) {
+    recordTransferAdCooldown(db, trActor.actorKey);
+  }
   save();
   res.json({
     ok: 1,

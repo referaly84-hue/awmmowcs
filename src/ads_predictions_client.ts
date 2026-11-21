@@ -1158,7 +1158,7 @@ export async function runAdsgramBlock(
   title: string,
   subtitle?: string,
   opts?: { teamId?: string; isAdminTest?: boolean }
-): Promise<{ adProof: string; blockKey: string; clicked: boolean } | null> {
+): Promise<{ adProof: string; blockKey: string; clicked: boolean; cooldown?: any } | null> {
   const { api, e, toast, modal } = B();
   const wa = window.Telegram?.WebApp;
   const tgInitData = typeof wa?.initData === 'string' ? wa.initData : '';
@@ -1520,7 +1520,7 @@ export async function runAdsgramBlock(
       description: String(res?.description || ''),
       rewardEventFired: rewardEventFired || completeEventFired,
     });
-    return { adProof: completed.adProof, blockKey, clicked: !!completed.clicked };
+    return { adProof: completed.adProof, blockKey, clicked: !!completed.clicked, cooldown: completed.cooldown || null };
   } catch (err: any) {
     const rawMsg = String(err?.description || err?.message || eventError || '').trim();
     const reason = bannerNotFound || /no ads/i.test(rawMsg) ? 'no_ad' : skipped ? 'skip' : 'error';

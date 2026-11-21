@@ -5969,7 +5969,7 @@ function syncTransferCooldownUi(clubId) {
       });
       banners.forEach(el => {
         el.style.display = 'block';
-        el.textContent = `⏳ Перерыв между подачей заявок на трансфер (1 мин): подождите ${cdStr}`;
+        el.textContent = `⏳ Перерыв на рекламу перед следующей заявкой (1 мин): подождите ${cdStr}`;
       });
     } else {
       if (window.__trCdTimer) { clearInterval(window.__trCdTimer); window.__trCdTimer = null; }
@@ -5992,10 +5992,19 @@ function syncTransferCooldownUi(clubId) {
   }
 }
 
+function applyLastTransferAdCooldown(clubId) {
+  const rec = window.__lastTransferAdCd;
+  const k = getTransferCdClubKey(clubId);
+  if (rec && rec.clubKey === k && rec.cd) {
+    setTransferCooldown(k, rec.cd);
+    syncTransferCooldownUi(k);
+  }
+}
+
 async function ensureTransferAdProof(title, subtitle = 'Просмотрите короткую рекламу Adsgram (int-61173) перед отправкой трансферной заявки.') {
   const cdLeft = getTransferCooldownLeftMs();
   if (cdLeft > 0) {
-    toast(`Перерыв между заявками на трансфер: подождите ещё ${fmtTrCd(cdLeft)}.`, true);
+    toast(`Перерыв на рекламу (1 мин): подождите ещё ${fmtTrCd(cdLeft)}.`, true);
     syncTransferCooldownUi();
     return null;
   }
@@ -6003,7 +6012,14 @@ async function ensureTransferAdProof(title, subtitle = 'Просмотрите �
     const ext = await ensureExt();
     const opts = (S.me?.role === 'admin' && CLUB_TID) ? { teamId: CLUB_TID } : undefined;
     const adRes = await ext.runAdsgramBlock('transfer_request', title, subtitle, opts);
-    return adRes?.adProof || null;
+    if (adRes?.adProof) {
+      window.__lastTransferAdCd = {
+        clubKey: getTransferCdClubKey(),
+        cd: adRes.cooldown || { cooldownRemainingMs: 60000, nextAvailableAt: Date.now() + 60000 }
+      };
+      return adRes.adProof;
+    }
+    return null;
   } catch (err) {
     toast(err?.message || 'Не удалось запустить рекламу Adsgram', true);
     return null;
@@ -6232,10 +6248,12 @@ function setupEuropeanTransferHandlers(app, refreshFn) {
       })), 'Заявка отправлена админу на проверку');
       if (r) {
         if (r.transferCooldown) setTransferCooldown(CLUB_TID, r.transferCooldown);
+        else applyLastTransferAdCooldown(CLUB_TID);
         refreshFn();
       } else {
         btnSend.disabled = false;
         btnSend.textContent = 'Отправить заявку админу';
+        applyLastTransferAdCooldown(CLUB_TID);
       }
     };
   }
@@ -6259,10 +6277,12 @@ function setupEuropeanTransferHandlers(app, refreshFn) {
       })), 'Список заявок отправлен админу');
       if (r) {
         if (r.transferCooldown) setTransferCooldown(CLUB_TID, r.transferCooldown);
+        else applyLastTransferAdCooldown(CLUB_TID);
         refreshFn();
       } else {
         btnBatchSend.disabled = false;
         btnBatchSend.textContent = 'Отправить весь список админу 🚀';
+        applyLastTransferAdCooldown(CLUB_TID);
       }
     };
   }
@@ -7350,8 +7370,11 @@ async function pgClub(app) {
       const r = await act(() => api('/club/squad/add', withT({ playerId: id, register: !!$('#padd_auto_reg')?.checked, ...(adProof ? { adProof } : {}) })));
       if (r) {
         if (r.transferCooldown) setTransferCooldown(c.team.id, r.transferCooldown);
+        else if (adProof) applyLastTransferAdCooldown(c.team.id);
         toast(r.message || (r.registered ? 'Игрок добавлен в состав и включён в заявку' : 'Игрок добавлен в общий состав'));
         pgClub(app);
+      } else if (adProof) {
+        applyLastTransferAdCooldown(c.team.id);
       }
     };
     if ($('#padd')) {
@@ -8369,10 +8392,14 @@ async function pgClub(app) {
             const resSign = await act(() => api('/club/free-agent/sign', withT({ playerId: btn.dataset.faSign, register: !!$('#fa_auto_reg')?.checked, adProof })));
             if (resSign) {
               if (resSign.transferCooldown) setTransferCooldown(c.team.id, resSign.transferCooldown);
+              else applyLastTransferAdCooldown(c.team.id);
               toast(resSign.message || 'Заявка отправлена админу на одобрение');
               pgClub(app);
             }
-            else btn.disabled = false;
+            else {
+              btn.disabled = false;
+              applyLastTransferAdCooldown(c.team.id);
+            }
           });
           syncTransferCooldownUi(c.team.id);
         } catch (err) {
@@ -8737,10 +8764,12 @@ async function pgClub(app) {
         })));
         if (r) {
           if (r.transferCooldown) setTransferCooldown(c.team.id, r.transferCooldown);
+          else applyLastTransferAdCooldown(c.team.id);
           toast(r.message || 'Предложение направлено');
           pgClub(app);
         } else {
           btnSubmitOffer.disabled = false;
+          applyLastTransferAdCooldown(c.team.id);
         }
       };
     }
