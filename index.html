@@ -2980,10 +2980,9 @@ async function pgLogin(app) {
 
 /* ───── главная ───── */
 async function pgHome(app) {
-  const [rawFx, rawTb, topTr] = await Promise.all([
+  const [rawFx, rawTb] = await Promise.all([
     api('/fixtures').catch(() => []),
-    api('/table/rpl').catch(() => []),
-    api('/transfers/top').catch(() => ({ expensive: [], valuable: [], flops: [] }))
+    api('/table/rpl').catch(() => [])
   ]);
   const allFx = Array.isArray(rawFx) ? rawFx : [];
   const tb = Array.isArray(rawTb) ? rawTb : [];
@@ -3020,121 +3019,6 @@ async function pgHome(app) {
     .sort((a, b) => fxRealTs(b) - fxRealTs(a) || String((b.date || '') + (b.time || '')).localeCompare(String((a.date || '') + (a.time || ''))))
     .slice(0, 3);
 
-  let trTab = 'expensive';
-
-  function renderTransferItem(t, idx, tab) {
-    return `
-      <div style="padding:10px 0;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px">
-        <div class="row sp" style="flex-wrap:wrap;gap:6px">
-          <div class="row" style="gap:8px;align-items:center">
-            <span style="font-weight:700;color:var(--muted);width:20px;font-size:13px">${idx + 1}.</span>
-            <span class="tag" style="font-size:11px;font-weight:700;background:#e2e8f0">${e(t.pos)}</span>
-            <b style="font-size:15px">${e(t.playerName)}</b>
-            <span class="tag" style="font-size:11px;background:${t.type === 'loan' ? '#eff6ff;color:#1e40af' : '#f0fdf4;color:#166534'}">${t.type === 'loan' ? 'Аренда' : 'Трансфер'}</span>
-          </div>
-          <div style="font-size:14px;font-weight:800;color:#0d2f21;background:#fef08a;padding:2px 8px;border-radius:6px;border:1px solid #fde047">
-            ${e(t.fee)}
-          </div>
-        </div>
-        <div class="row" style="gap:8px;font-size:13px;align-items:center;color:var(--ink);flex-wrap:wrap">
-          <div class="row" style="gap:6px;align-items:center">
-            ${t.fromLogo ? `<img class="t-logo sm" src="${t.fromLogo}" alt="" style="width:18px;height:18px">` : ''}
-            <span class="muted">${e(t.fromName)}</span>
-          </div>
-          <span style="color:var(--muted)">➔</span>
-          <div class="row" style="gap:6px;align-items:center">
-            ${t.toLogo ? `<img class="t-logo sm" src="${t.toLogo}" alt="" style="width:18px;height:18px">` : ''}
-            <b style="color:var(--green)">${e(t.toName)}</b>
-          </div>
-          <span class="muted small" style="margin-left:auto">${e(t.date || '')}</span>
-        </div>
-        ${tab === 'valuable' ? `
-          <div style="font-size:12px;background:#f0fdf4;border-left:3px solid #22c55e;padding:4px 8px;border-radius:4px;color:#166534">
-            <b>⚡ Польза для нового клуба:</b> ${e(t.stats?.summary || `${t.stats?.goals || 0} голов, ${t.stats?.assists || 0} ассистов`)} · Ср. оценка: <b>${Number(t.stats?.rating || 7.0).toFixed(2)}</b>
-          </div>
-        ` : tab === 'flop' ? `
-          <div style="font-size:12px;background:#fef2f2;border-left:3px solid #ef4444;padding:4px 8px;border-radius:4px;color:#991b1b">
-            <b>📉 Провальный трансфер:</b> Переплата: <b>${e(t.fee)}</b> при низкой отдаче (${e(t.stats?.summary || `${t.stats?.goals || 0} голов в ${t.stats?.matches || 0} матчах`)}, оценка: <b>${Number(t.stats?.rating || 6.0).toFixed(2)}</b>)
-          </div>
-        ` : `
-          <div style="font-size:12px;background:#f8fafc;padding:3px 8px;border-radius:4px;color:var(--muted)">
-            <b>Условия:</b> ${e(t.note || 'Полноценный трансфер')} · ${e(t.stats?.summary || '')}
-          </div>
-        `}
-      </div>
-    `;
-  }
-
-  function renderTopTransfers(limit = 2) {
-    const list = trTab === 'expensive'
-      ? (topTr?.expensive || [])
-      : (trTab === 'valuable' ? (topTr?.valuable || []) : (topTr?.flops || []));
-    if (!list.length) {
-      return `<div class="empty" style="padding:16px 0;color:var(--muted)">${trTab === 'flop' ? 'Провальных трансферов с переплатой не обнаружено.' : 'В текущем сезоне трансферов пока не совершено.'}</div>`;
-    }
-    const sliced = limit ? list.slice(0, limit) : list;
-    return sliced.map((t, idx) => renderTransferItem(t, idx, trTab)).join('');
-  }
-
-  function showTopTransfersModal() {
-    let modalTab = trTab;
-    function modalContent() {
-      const list = modalTab === 'expensive'
-        ? (topTr?.expensive || [])
-        : (modalTab === 'valuable' ? (topTr?.valuable || []) : (topTr?.flops || []));
-      const bodyHtml = list.length
-        ? list.slice(0, 10).map((t, idx) => renderTransferItem(t, idx, modalTab)).join('')
-        : `<div class="empty">${modalTab === 'flop' ? 'Провальных трансферов с переплатой не обнаружено' : 'Нет данных'}</div>`;
-
-      return `
-        <div class="row sp" style="margin-bottom:12px">
-          <div class="row" style="gap:8px">
-            <span style="font-size:22px">🔥</span>
-            <div>
-              <h3 style="margin:0">Топ-10 трансферов лиги</h3>
-              <div class="muted small">Рейтинг переходов сезона ${e(S.st?.season || '2026/27')}</div>
-            </div>
-          </div>
-          <button class="btn alt sm" id="m_tr_close" style="padding:4px 8px">✕</button>
-        </div>
-        <div class="tabs" style="margin-bottom:12px">
-          <button id="m_btn_exp" class="${modalTab === 'expensive' ? 'on' : ''}">💎 Самые дорогие (Топ-10)</button>
-          <button id="m_btn_val" class="${modalTab === 'valuable' ? 'on' : ''}">⚡ Самые выгодные (Топ-10)</button>
-          <button id="m_btn_flop" class="${modalTab === 'flop' ? 'on' : ''}">📉 Самые провальные (Топ-10)</button>
-        </div>
-        <div id="m_tr_body" style="max-height:60vh;overflow-y:auto;padding-right:4px">
-          ${bodyHtml}
-        </div>
-      `;
-    }
-
-    const m = modal(modalContent(), mEl => {
-      mEl.querySelector('#m_tr_close')?.addEventListener('click', () => m.remove());
-      const bExp = mEl.querySelector('#m_btn_exp');
-      const bVal = mEl.querySelector('#m_btn_val');
-      const bFlop = mEl.querySelector('#m_btn_flop');
-      const bBody = mEl.querySelector('#m_tr_body');
-      if (bExp && bVal && bBody) {
-        const updateModalTab = (tabName, btnOn) => {
-          modalTab = tabName;
-          [bExp, bVal, bFlop].forEach(b => b?.classList.remove('on'));
-          btnOn?.classList.add('on');
-          const l = modalTab === 'expensive'
-            ? (topTr?.expensive || [])
-            : (modalTab === 'valuable' ? (topTr?.valuable || []) : (topTr?.flops || []));
-          bBody.innerHTML = l.length
-            ? l.slice(0, 10).map((t, idx) => renderTransferItem(t, idx, modalTab)).join('')
-            : `<div class="empty">${modalTab === 'flop' ? 'Провальных трансферов с переплатой не обнаружено' : 'Нет данных'}</div>`;
-        };
-        bExp.onclick = () => updateModalTab('expensive', bExp);
-        bVal.onclick = () => updateModalTab('valuable', bVal);
-        bFlop && (bFlop.onclick = () => updateModalTab('flop', bFlop));
-      }
-    });
-  }
-
-  const hasAnyTransfers = (topTr?.expensive?.length || 0) > 0 || (topTr?.valuable?.length || 0) > 0 || (topTr?.flops?.length || 0) > 0;
-
   app.innerHTML = `<h1>Сезон ${e(S.st?.season || '2026/27')}</h1>
 
   ${live.length ? `<div class="panel"><h3><span class="live-dot"></span>Сейчас идут</h3>${live.map(f => fxRow(f, true)).join('')}</div>` : ''}
@@ -3142,38 +3026,6 @@ async function pgHome(app) {
     <div>
       <div class="panel"><h3>Ближайшие матчи</h3>${next.length ? next.map(f => fxRow(f, true)).join('') : '<div class="empty">Расписание ещё не создано или сезон завершён.</div>'}</div>
       <div class="panel"><h3>Последние результаты</h3>${last.length ? last.map(f => fxRow(f, true)).join('') : '<div class="empty">Матчей пока не было.</div>'}</div>
-      <div class="panel" id="home_top_transfers">
-        <div class="row sp" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">
-          <div style="display:flex;align-items:center;gap:8px;cursor:pointer" id="tr_header_title" title="Нажмите, чтобы открыть Топ-10 трансферов">
-            <span style="font-size:18px">🔥</span>
-            <h3 style="margin:0;display:inline-flex;align-items:center;gap:6px">
-              Топ трансферы
-            </h3>
-          </div>
-          <div class="row" style="gap:6px;align-items:center;flex-wrap:wrap">
-            <div class="tabs" style="margin:0">
-              <button id="btn_tr_exp" class="on" style="padding:4px 8px;font-size:12px">💎 Дорогие</button>
-              <button id="btn_tr_val" style="padding:4px 8px;font-size:12px">⚡ Выгодные</button>
-              <button id="btn_tr_flop" style="padding:4px 8px;font-size:12px">📉 Провальные</button>
-            </div>
-            ${hasAnyTransfers ? `
-              <button class="btn alt sm" id="open_top_transfers_modal" style="font-size:12px;padding:3px 8px;font-weight:700" title="Открыть окно с топ-10 трансферами">
-                Топ-10 ↗
-              </button>
-            ` : ''}
-          </div>
-        </div>
-        <div id="top_transfers_box">
-          ${renderTopTransfers(2)}
-        </div>
-        ${hasAnyTransfers ? `
-          <div style="margin-top:10px;text-align:center;border-top:1px dashed var(--line);padding-top:8px">
-            <button class="btn alt sm" id="btn_more_transfers" style="font-size:12px;width:100%;justify-content:center">
-              Показать полный Топ-10 трансферов →
-            </button>
-          </div>
-        ` : ''}
-      </div>
     </div>
     <div class="panel">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
@@ -3184,27 +3036,6 @@ async function pgHome(app) {
       <p class="small" style="margin-top:12px"><a href="#/table/rpl">Все турнирные таблицы с эмблемами лиг →</a></p>
     </div>
   </div>`;
-
-  const btnExp = $('#btn_tr_exp');
-  const btnVal = $('#btn_tr_val');
-  const btnFlop = $('#btn_tr_flop');
-  const box = $('#top_transfers_box');
-
-  if (btnExp && btnVal && box) {
-    const setTrTab = (tabName, btnOn) => {
-      trTab = tabName;
-      [btnExp, btnVal, btnFlop].forEach(b => b?.classList.remove('on'));
-      btnOn?.classList.add('on');
-      box.innerHTML = renderTopTransfers(2);
-    };
-    btnExp.onclick = () => setTrTab('expensive', btnExp);
-    btnVal.onclick = () => setTrTab('valuable', btnVal);
-    btnFlop && (btnFlop.onclick = () => setTrTab('flop', btnFlop));
-  }
-
-  $('#tr_header_title')?.addEventListener('click', showTopTransfersModal);
-  $('#open_top_transfers_modal')?.addEventListener('click', showTopTransfersModal);
-  $('#btn_more_transfers')?.addEventListener('click', showTopTransfersModal);
 }
 
 function renderCompTabs(curComp, prefix = 'table') {

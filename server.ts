@@ -7775,45 +7775,6 @@ function executeTransferIfBothApproved(t) {
   }
   return false;
 }
-function formatTransferForPublic(t) {
-  const fromT = team(t.from);
-  const toT = team(t.to);
-  const p = player(t.pid);
-  const feeAmt = t.feeAmount !== void 0 ? t.feeAmount : parseFeeAmount(t.fee);
-  return {
-    id: t.id,
-    pid: t.pid,
-    playerName: t.playerName || p?.name || "\u0418\u0433\u0440\u043E\u043A",
-    pos: t.pos || p?.pos || "\u0426\u041F",
-    from: t.from,
-    fromName: fromT?.name || t.fromName || "\u041A\u043B\u0443\u0431",
-    fromLogo: teamLogo(t.from),
-    to: t.to,
-    toName: toT?.name || t.toName || "\u041A\u043B\u0443\u0431",
-    toLogo: teamLogo(t.to),
-    fee: t.fee || (feeAmt ? `\u20AC${feeAmt.toFixed(1)}M` : "\u0421\u0432\u043E\u0431\u043E\u0434\u043D\u044B\u0439 \u0430\u0433\u0435\u043D\u0442"),
-    feeAmount: feeAmt,
-    type: t.type || "transfer",
-    mandatoryBuyoutOnRplRetention: !!(t.mandatoryBuyoutOnRplRetention || t.mandatoryBuyout || t.type === "loan_mandatory_rpl"),
-    mandatoryBuyout: !!(t.mandatoryBuyoutOnRplRetention || t.mandatoryBuyout || t.type === "loan_mandatory_rpl"),
-    buyoutFee: t.buyoutFee || null,
-    loanCondition: t.loanCondition || (t.mandatoryBuyoutOnRplRetention || t.type === "loan_mandatory_rpl" ? "\u0421\u043E\u0445\u0440\u0430\u043D\u0435\u043D\u0438\u0435 \u043F\u0440\u043E\u043F\u0438\u0441\u043A\u0438 \u0432 \u0420\u041F\u041B" : null),
-    sellOnPercent: t.sellOnPercent ? Number(t.sellOnPercent) : 0,
-    sellOnClubId: t.sellOnClubId || null,
-    sellOnClubName: t.sellOnClubName || null,
-    note: t.note || (t.mandatoryBuyoutOnRplRetention || t.type === "loan_mandatory_rpl" ? `\u0410\u0440\u0435\u043D\u0434\u0430 \u0441 \u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u044B\u043C \u0432\u044B\u043A\u0443\u043F\u043E\u043C (${t.buyoutFee || "\u20AC8.0M"})${t.loanCondition ? ` \u043F\u0440\u0438 \u0443\u0441\u043B\u043E\u0432\u0438\u0438: \xAB${t.loanCondition}\xBB` : ""}` : t.type === "loan" ? "\u0410\u0440\u0435\u043D\u0434\u0430" : "\u041F\u043E\u043B\u043D\u043E\u0446\u0435\u043D\u043D\u044B\u0439 \u0442\u0440\u0430\u043D\u0441\u0444\u0435\u0440"),
-    date: t.date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
-    isRplToRpl: !!t.isRplToRpl,
-    stats: t.statsForNewClub || {
-      matches: p?.matches || 0,
-      goals: p?.goals || 0,
-      assists: p?.assists || 0,
-      rating: Number(p?.rating || 7),
-      impactScore: (p?.goals || 0) * 4 + (p?.assists || 0) * 2.5 + (p?.matches || 0) * 1.2,
-      summary: `${p?.goals || 0} \u0433\u043E\u043B\u043E\u0432, ${p?.assists || 0} \u0430\u0441\u0441\u0438\u0441\u0442\u043E\u0432 \u0432 ${p?.matches || 0} \u043C\u0430\u0442\u0447\u0430\u0445`
-    }
-  };
-}
 var INITIAL_RPL_BUDGETS = {
   "\u0417\u0435\u043D\u0438\u0442": 45e6,
   "\u0421\u043F\u0430\u0440\u0442\u0430\u043A": 3e7,
@@ -15590,41 +15551,6 @@ app.get("/api/weather/city/:cityName", async (req, res) => {
   const timeStr = String(req.query.time || "17:00");
   const w = await fetchRealMatchWeather(cityName, dateStr, timeStr);
   res.json(w);
-});
-app.get("/api/transfers/top", (req, res) => {
-  const approved = (db.transfers || []).filter((t) => t.status === "approved" && !t.isInternalFamily && t.type !== "internal_family");
-  const expensive = [...approved].sort((a, b) => {
-    const amtA = a.feeAmount !== void 0 ? a.feeAmount : parseFeeAmount(a.fee);
-    const amtB = b.feeAmount !== void 0 ? b.feeAmount : parseFeeAmount(b.fee);
-    return amtB - amtA;
-  }).slice(0, 10);
-  const valuable = [...approved].sort((a, b) => {
-    const pA = player(a.pid);
-    const pB = player(b.pid);
-    const scoreA = a.statsForNewClub?.impactScore !== void 0 ? a.statsForNewClub.impactScore : (pA?.goals || 0) * 4 + (pA?.assists || 0) * 2.5 + (pA?.matches || 0) * 1.2;
-    const scoreB = b.statsForNewClub?.impactScore !== void 0 ? b.statsForNewClub.impactScore : (pB?.goals || 0) * 4 + (pB?.assists || 0) * 2.5 + (pB?.matches || 0) * 1.2;
-    return scoreB - scoreA;
-  }).slice(0, 10);
-  const flops = [...approved].filter((t) => {
-    const amt = t.feeAmount !== void 0 ? t.feeAmount : parseFeeAmount(t.fee);
-    return amt > 0;
-  }).sort((a, b) => {
-    const amtA = a.feeAmount !== void 0 ? a.feeAmount : parseFeeAmount(a.fee);
-    const amtB = b.feeAmount !== void 0 ? b.feeAmount : parseFeeAmount(b.fee);
-    const pA = player(a.pid);
-    const pB = player(b.pid);
-    const impactA = a.statsForNewClub?.impactScore !== void 0 ? a.statsForNewClub.impactScore : (pA?.goals || 0) * 3 + (pA?.assists || 0) * 2 + (pA?.matches || 0) * 0.5 + Math.max(0, (pA?.rating || 6.5) - 6);
-    const impactB = b.statsForNewClub?.impactScore !== void 0 ? b.statsForNewClub.impactScore : (pB?.goals || 0) * 3 + (pB?.assists || 0) * 2 + (pB?.matches || 0) * 0.5 + Math.max(0, (pB?.rating || 6.5) - 6);
-    const flopScoreA = amtA / Math.max(0.1, impactA + 0.1);
-    const flopScoreB = amtB / Math.max(0.1, impactB + 0.1);
-    return flopScoreB - flopScoreA;
-  }).slice(0, 10);
-  res.json({
-    expensive: expensive.map(formatTransferForPublic),
-    valuable: valuable.map(formatTransferForPublic),
-    flops: flops.map(formatTransferForPublic),
-    totalCount: approved.length
-  });
 });
 app.get("/api/fixtures", (req, res) => {
   let l = seasonFx();
