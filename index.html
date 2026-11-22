@@ -4516,6 +4516,10 @@ function paintMatch() {
       <div class="interview-quote">
         «${e(motm.quote || motm.interview?.quote || '')}»
       </div>
+      ${(motm.tacticsComment || motm.interview?.tacticsComment) ? `
+      <div class="interview-coach-note">
+        <b>🎯 Про тактику и игру команды:</b> ${e(motm.tacticsComment || motm.interview?.tacticsComment || '')}
+      </div>` : ''}
 
       <div style="margin-top:18px;border-top:1px dashed var(--line);padding-top:14px">
         <div class="row sp" style="margin-bottom:6px;gap:8px;flex-wrap:wrap">
@@ -8618,7 +8622,7 @@ async function pgClub(app) {
               <span>🌍 Международный скаутинг и трансферы за рубеж</span>
             </div>
             <p style="margin:6px 0 0;font-size:13.5px;color:#d1fae5;line-height:1.45">
-              Зарубежные скауты отслеживают выступления футболистов на дистанции всего сезона: стабильно высокие оценки в нескольких турах подряд, результативные серии, сухие матчи и прогресс молодых талантов. Клубы Европы и мира сначала берут игрока «на карандаш», а затем направляют официальное предложение.
+              Зарубежные скауты учитывают уровень клуба и его место в таблице: топ-клубы долго ведут лидеров верхушки РПЛ (от 7–8 матчей), а более скромные команды реагируют быстрее и следят также за нижней частью таблицы и ФНЛ. Каждый зарубежный клуб отправляет не более 1–2 запросов за сезон.
             </p>
           </div>
           ${S.me?.role === 'admin' ? `
@@ -8702,8 +8706,8 @@ async function pgClub(app) {
           <div class="empty" style="padding:28px 16px;text-align:center">
             <div style="font-size:36px;margin-bottom:8px">🔭</div>
             <div style="font-weight:700;font-size:15px;color:#1e293b">Активных зарубежных предложений сейчас нет</div>
-            <p class="muted small" style="max-width:500px;margin:6px auto 14px">
-              Скауты оценивают форму игроков на дистанции сезона (от 3–4 официальных матчей): среднюю оценку, стабильность в последних турах, голы, ассисты и сухие матчи.${S.me?.role === 'admin' ? ' Вы также можете запросить оценку скаутов прямо сейчас по кнопке выше.' : ''}
+            <p class="muted small" style="max-width:540px;margin:6px auto 14px">
+              Топ-клубы следят за игроками дольше (от 7–8 матчей) и выбирают только представителей верхней части РПЛ, а клубы попроще реагируют быстрее (от 3–4 матчей). Зарубежный клуб может сделать не более 1–2 запросов за сезон.${S.me?.role === 'admin' ? ' Вы также можете запросить оценку скаутов прямо сейчас по кнопке выше.' : ''}
             </p>
           </div>
         `}
