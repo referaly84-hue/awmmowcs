@@ -6798,7 +6798,7 @@ async function pgClub(app) {
     <button data-t="stats" class="${CT === 'stats' ? 'on' : ''}">📊 Статистика</button>
     <button data-t="squad" class="${CT === 'squad' ? 'on' : ''}">Состав и заявка (${c.squad.length}/${c.squadMax} · ${(c.roster || c.squad).length})</button>
     ${famTeams.length ? `<button data-t="family" class="${CT === 'family' ? 'on' : ''}">🔄 Перевод (основа ↔ дубль)</button>` : ''}
-    <button data-t="staff" class="${CT === 'staff' ? 'on' : ''}" style="${(c.staffSlots || []).some(x => x.required && !x.member) ? 'background:#fee2e2;color:#991b1b;font-weight:700' : ''}">🧑‍🏫 Штаб ${(c.staffSlots || []).filter(x => x.required && !x.member).length ? `(не хватает: ${(c.staffSlots || []).filter(x => x.required && !x.member).length})` : ''}</button>
+    <button data-t="staff" class="${CT === 'staff' ? 'on' : ''}" style="${(c.staffSlots || []).some(x => x.required && !x.member) ? 'background:#fee2e2;color:#991b1b;font-weight:700' : (c.coachRequests?.pending?.length ? 'background:#fef3c7;color:#92400e;font-weight:700' : '')}">🧑‍🏫 Штаб ${(c.staffSlots || []).filter(x => x.required && !x.member).length ? `(не хватает: ${(c.staffSlots || []).filter(x => x.required && !x.member).length})` : (c.coachRequests?.pending?.length ? '(⏳ смена тренера)' : '')}</button>
     <button data-t="staffmarket" class="${CT === 'staffmarket' ? 'on' : ''}" style="${(c.staffOffers?.incoming?.length) ? 'background:#dcfce7;color:#166534;font-weight:700' : ''}">🔄 Рынок штаба ${(c.staffOffers?.incoming?.length || c.staffOffers?.outgoing?.length) ? `(${(c.staffOffers.incoming?.length || 0) + (c.staffOffers.outgoing?.length || 0)})` : ''}</button>
     <button data-t="foreign" class="${CT === 'foreign' ? 'on' : ''}" style="${c.foreignOffers?.length ? 'background:#dcfce7;color:#166534;font-weight:700' : ''}">🌍 Зарубежные предложения ${c.foreignOffers?.length ? `<span style="background:#dc2626;color:#fff;border-radius:10px;padding:2px 7px;font-size:11px;margin-left:4px">${c.foreignOffers.length}</span>` : ''}</button>
     <button data-t="friendly" class="${CT === 'friendly' ? 'on' : ''}">Товарищеские ${(c.friendly?.incoming?.length || 0) ? `(${c.friendly.incoming.length})` : ''}</button>
@@ -7594,10 +7594,12 @@ async function pgClub(app) {
   if (CT === 'staff') {
     const slots = c.staffSlots || [];
     const miss = slots.filter(x => x.required && !x.member);
+    const coachReqHist = (c.coachRequests?.history || []).filter(r => r.role === 'head');
+    const lastRejectedCoach = coachReqHist[0]?.status === 'rejected' ? coachReqHist[0] : null;
     cb.innerHTML = `
     <div class="panel">
       <h3 style="margin:0 0 6px">Главный тренер и тренерский штаб</h3>
-      <p class="muted small" style="margin:0 0 10px">Для назначения специалиста достаточно указать его ФИО (возраст и гражданство по желанию). Подробный ИИ-портрет и биографию специалиста составит администратор с помощью нейросети. Чтобы заменить специалиста, просто назначьте нового на ту же должность.</p>
+      <p class="muted small" style="margin:0 0 10px">Для назначения специалиста достаточно указать его ФИО (возраст и гражданство по желанию). Подробный ИИ-портрет и биографию специалиста составит администратор. <b>Смена главного тренера проходит через одобрение администратора</b> — пока заявка не одобрена, в клубе остаётся прежний главный тренер.</p>
       ${miss.length
         ? `<div style="font-size:13px;color:#991b1b;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:8px 12px">⚠ Штаб не укомплектован — перед матчем команде будет засчитано техническое поражение 0:3. Не хватает: <b>${miss.map(x => e(x.title)).join(', ')}</b>.</div>`
         : `<div style="font-size:13px;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:8px 12px">✓ Обязательные должности заполнены.</div>`}
@@ -7618,7 +7620,7 @@ async function pgClub(app) {
     ${slots.map(x => `
     <div class="panel" data-slot="${x.role}">
       <div class="row sp" style="flex-wrap:wrap;gap:8px">
-        <div class="row" style="gap:8px"><span class="staff-role-badge ${x.role}">${x.icon} ${e(x.title)}</span>${x.required ? '<span class="tag" style="background:#fee2e2;color:#991b1b;border-color:#fca5a5">обязательно</span>' : `<span class="tag">${x.custom ? 'своя должность' : 'по желанию'}</span>`}</div>
+        <div class="row" style="gap:8px"><span class="staff-role-badge ${x.role}">${x.icon} ${e(x.title)}</span>${x.required ? '<span class="tag" style="background:#fee2e2;color:#991b1b;border-color:#fca5a5">обязательно</span>' : `<span class="tag">${x.custom ? 'своя должность' : 'по желанию'}</span>`}${x.role === 'head' ? '<span class="tag" style="background:#e0f2fe;color:#0369a1;border-color:#bae6fd">через одобрение админа</span>' : ''}</div>
         <div class="small muted">${e(x.desc)}</div>
       </div>
       ${x.member ? `<div style="margin-top:8px"><b style="font-size:15px">${e(x.member.name)}</b>
@@ -7626,15 +7628,33 @@ async function pgClub(app) {
         ${x.member.pending ? '<span class="tag" style="background:#fef9c3;color:#854d0e;border-color:#fde047;margin-left:6px">ждёт портрета от администратора</span>' : '<span class="tag" style="background:#dcfce7;color:#166534;border-color:#bbf7d0;margin-left:6px">портрет готов</span>'}
         ${x.member.bio ? `<div class="small muted" style="margin-top:3px">${e(x.member.bio)}</div>` : (x.member.brief ? `<div class="small muted" style="margin-top:3px">📝 ${e(x.member.brief)}</div>` : '')}</div>`
         : `<div class="muted small" style="margin-top:8px">${x.required ? 'Не назначен' : 'Не назначен (можно не заполнять)'}</div>`}
-      <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">${x.member ? 'Заменить специалиста' : 'Назначить специалиста'}</summary>
+      ${x.pendingChange ? `
+      <div style="margin-top:10px;padding:10px 12px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px">
+        <div class="row sp" style="gap:8px;flex-wrap:wrap;align-items:center">
+          <div>
+            <div style="font-weight:700;color:#92400e">⏳ Ожидает одобрения администратора</div>
+            <div class="small" style="margin-top:3px">Кандидат на пост главного тренера: <b>${e(x.pendingChange.name)}</b>${x.pendingChange.age ? ` · ${x.pendingChange.age} лет` : ''}${x.pendingChange.nationality ? ` · ${e(x.pendingChange.nationality)}` : ''}</div>
+            ${x.pendingChange.brief ? `<div class="small muted" style="margin-top:2px">📝 ${e(x.pendingChange.brief)}</div>` : ''}
+            <div class="small muted" style="margin-top:3px">Пока администратор не одобрит заявку, в команде остаётся текущий тренер${x.member ? ` (<b>${e(x.member.name)}</b>)` : ''}.</div>
+          </div>
+          <button class="btn sm warn scancel" data-creq-id="${e(x.pendingChange.id)}">Отозвать заявку</button>
+        </div>
+      </div>` : (x.role === 'head' && lastRejectedCoach ? `
+      <div style="margin-top:10px;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12.5px;color:#991b1b">
+        ❌ Предыдущая заявка на <b>${e(lastRejectedCoach.name)}</b> отклонена администратором${lastRejectedCoach.rejectReason ? `: ${e(lastRejectedCoach.rejectReason)}` : ''}. Прежний тренер сохранён.
+      </div>` : '')}
+      <details style="margin-top:8px" ${x.pendingChange ? '' : ''}><summary style="cursor:pointer;font-weight:600">${x.role === 'head' ? (x.member ? 'Подать заявку на смену тренера' : 'Подать заявку на назначение тренера') : (x.member ? 'Заменить специалиста' : 'Назначить специалиста')}</summary>
         <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
           <div style="flex:2;min-width:200px"><label class="small muted">ФИО</label><input class="sn" placeholder="Напр. Иван Иванов" style="width:100%"></div>
           <div style="flex:0.6;min-width:80px"><label class="small muted">Возраст</label><input class="sa" type="number" min="25" max="85" placeholder="лет" style="width:100%"></div>
           <div style="flex:1;min-width:120px"><label class="small muted">Гражданство</label><input class="sc" placeholder="Россия" style="width:100%"></div>
         </div>
-        <div class="small muted" style="margin-top:6px;color:#64748b">💡 Достаточно указать имя. ИИ-портрет специалиста сделает администратор.</div>
+        ${x.role === 'head' ? `
+        <div style="margin-top:6px"><label class="small muted">Комментарий / причина смены (необязательно)</label><input class="sb" maxlength="600" placeholder="Например: смена тактического курса, контракт до конца сезона…" style="width:100%"></div>
+        <div class="small muted" style="margin-top:6px;color:#b45309">⏳ Заявка отправится администратору. До его одобрения тренер команды не изменится.</div>` : `
+        <div class="small muted" style="margin-top:6px;color:#64748b">💡 Достаточно указать имя. ИИ-портрет специалиста сделает администратор.</div>`}
         <div class="row" style="margin-top:8px;gap:8px">
-          <button class="btn sm sset">${x.member ? 'Заменить' : 'Назначить'}</button>
+          <button class="btn sm sset">${x.role === 'head' ? 'Отправить на одобрение' : (x.member ? 'Заменить' : 'Назначить')}</button>
           ${x.member && !x.required ? '<button class="btn sm warn srm">Убрать с должности</button>' : ''}
           ${x.custom ? '<button class="btn sm warn srdel">Удалить должность</button>' : ''}
         </div>
@@ -7651,7 +7671,16 @@ async function pgClub(app) {
       box.querySelector('.sset').onclick = async () => {
         const name = box.querySelector('.sn').value.trim();
         if (name.length < 3) return toast('Укажите ФИО специалиста', true);
-        const r = await act(() => api('/club/staff/set', withT({ role, name, age: box.querySelector('.sa').value, nationality: box.querySelector('.sc').value.trim() })), 'Сохранено — портрет сделает администратор');
+        const brief = box.querySelector('.sb')?.value.trim() || '';
+        const defaultMsg = role === 'head'
+          ? 'Заявка на смену тренера отправлена администратору — до одобрения тренер не меняется'
+          : 'Сохранено — портрет сделает администратор';
+        const r = await act(() => api('/club/staff/set', withT({ role, name, age: box.querySelector('.sa').value, nationality: box.querySelector('.sc').value.trim(), brief })), res => res.message || defaultMsg);
+        if (r) pgClub(app);
+      };
+      const sc = box.querySelector('.scancel');
+      if (sc) sc.onclick = async () => {
+        const r = await act(() => api('/club/staff/change-cancel', withT({ requestId: sc.dataset.creqId })), res => res.message || 'Заявка отозвана');
         if (r) pgClub(app);
       };
       const rd = box.querySelector('.srdel');
@@ -9681,7 +9710,7 @@ async function pgAdmin(app) {
     ['draw', '🎲 Жеребьёвка'],
     ['referees', 'Судьи'],
     ['commentators', '🎙️ Комментаторы'],
-    ['coaches', 'Тренеры и штаб'],
+    ['coaches', `Тренеры и штаб${ov.pendingCoachRequestsCount ? ' (' + ov.pendingCoachRequestsCount + ')' : ''}`],
     ['tournaments', 'Турниры'],
     ['clubs', 'Клубы и логотипы'],
     ['players', 'Игроки'],
@@ -11806,9 +11835,14 @@ async function pgAdmin(app) {
     };
   }
   else if (AT === 'coaches') {
-    const cData = await api('/admin/coaches');
+    const [cData, crData] = await Promise.all([
+      api('/admin/coaches'),
+      api('/admin/coach-requests').catch(() => ({ pending: [], history: [] }))
+    ]);
     if (AT !== 'coaches' || !document.contains(ab)) return;
     const allStaff = cData.staff || cData.coaches || [];
+    const pendingCoachReqs = crData.pending || [];
+    const historyCoachReqs = crData.history || [];
     window._stfRole = window._stfRole || 'all';
     window._stfClub = window._stfClub || 'all';
     window._stfQuery = window._stfQuery || '';
@@ -11837,7 +11871,52 @@ async function pgAdmin(app) {
       return true;
     });
 
+    const coachReqCard = r => `
+      <div style="padding:10px 12px;border:1px solid #fcd34d;background:#fffbeb;border-radius:8px;margin-top:8px" data-creq="${e(r.id)}">
+        <div class="row sp" style="gap:8px;flex-wrap:wrap;align-items:center">
+          <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+            ${r.clubLogo ? `<img class="t-logo sm" src="${r.clubLogo}" alt="">` : ''}
+            <b>${e(r.clubName)}</b>
+            <span class="muted small">→ новый главный тренер:</span>
+            <b style="font-size:15px;color:#0f172a">${e(r.name)}</b>
+            ${r.age ? `<span class="tag">${r.age} л.</span>` : ''}
+            ${r.nationality ? `<span class="tag">${e(r.nationality)}</span>` : ''}
+          </div>
+          <div class="row" style="gap:6px;flex-wrap:wrap">
+            <input class="creq-reason" placeholder="Причина отказа (если отклонить)" style="width:190px;font-size:12px">
+            <button class="btn sm creq-ok">✅ Одобрить смену</button>
+            <button class="btn sm warn creq-no">❌ Отклонить</button>
+          </div>
+        </div>
+        <div class="small muted" style="margin-top:4px">
+          Текущий тренер: <b>${e(r.currentCoachName || 'Не назначен')}</b> (остаётся до одобрения)${r.createdAt ? ' · подано: ' + e(new Date(r.createdAt).toLocaleString('ru-RU')) : ''}
+        </div>
+        ${r.brief ? `<div class="small" style="margin-top:4px;color:#475569">📝 Комментарий клуба: ${e(r.brief)}</div>` : ''}
+      </div>`;
+
     ab.innerHTML = `
+      <div class="panel" style="${pendingCoachReqs.length ? 'border:1px solid #f59e0b' : ''}">
+        <div class="row sp" style="gap:8px;flex-wrap:wrap;align-items:center">
+          <div>
+            <h3 style="margin:0">👔 Заявки на смену главного тренера${pendingCoachReqs.length ? ` (${pendingCoachReqs.length})` : ''}</h3>
+            <p class="muted small" style="margin:4px 0 0">Клубы не могут поменять главного тренера без одобрения администратора — пока заявка не одобрена, в команде остаётся текущий тренер.</p>
+          </div>
+        </div>
+        ${pendingCoachReqs.length
+          ? pendingCoachReqs.map(coachReqCard).join('')
+          : '<p class="muted small" style="margin:8px 0 0">Новых заявок на смену тренера нет.</p>'}
+        ${historyCoachReqs.length ? `
+        <details style="margin-top:10px">
+          <summary class="small muted" style="cursor:pointer">История решений по смене тренеров (${historyCoachReqs.length})</summary>
+          <div style="margin-top:6px">
+            ${historyCoachReqs.map(r => `<div class="small" style="padding:5px 0;border-top:1px dashed var(--line)">
+              ${r.status === 'approved' ? '✅' : r.status === 'cancelled' ? '↩' : '❌'}
+              <b>${e(r.clubName)}</b>: ${e(r.prevName || '—')} → <b>${e(r.name)}</b>
+              <span class="muted">(${r.status === 'approved' ? 'одобрено' : r.status === 'cancelled' ? 'отозвано' : 'отклонено'}${r.rejectReason ? ': ' + e(r.rejectReason) : ''})</span>
+            </div>`).join('')}
+          </div>
+        </details>` : ''}
+      </div>
       <div class="panel">
         <div class="row sp" style="flex-wrap:wrap;gap:10px;margin-bottom:12px">
           <div>
@@ -12044,6 +12123,18 @@ async function pgAdmin(app) {
       ev.target.disabled = true;
       const r = await act(() => api('/admin/staff/portraits-all', {}));
       if (r) { toast(`Портретов готово: ${r.updated}${r.failed ? `, не вышло: ${r.failed}` : ''}${r.left ? `, осталось: ${r.left} (нажмите ещё раз)` : ''}`); re(); } else ev.target.disabled = false;
+    });
+
+    // Одобрение / отклонение заявок на смену главного тренера
+    ab.querySelectorAll('[data-creq]').forEach(box => {
+      const requestId = box.dataset.creq;
+      const send = (action) => async () => {
+        const reason = box.querySelector('.creq-reason')?.value.trim() || '';
+        const r = await act(() => api('/admin/coach-request/respond', { requestId, action, reason }), res => res.message || (action === 'approve' ? 'Смена тренера одобрена' : 'Заявка отклонена'));
+        if (r) re();
+      };
+      box.querySelector('.creq-ok').onclick = send('approve');
+      box.querySelector('.creq-no').onclick = send('reject');
     });
 
     // Быстрое назначение клуба
@@ -12728,9 +12819,12 @@ async function pgAdmin(app) {
       }
     });
 
-    // ── заявки клубов на покупку тренеров и штаба ──
+    // ── заявки клубов на смену главного тренера и покупку штаба ──
     {
-      const so = await api('/admin/staff-offers').catch(() => ({ pending: [], history: [] }));
+      const [so, cr] = await Promise.all([
+        api('/admin/staff-offers').catch(() => ({ pending: [], history: [] })),
+        api('/admin/coach-requests').catch(() => ({ pending: [], history: [] }))
+      ]);
       const ap = v => v === 'approved' ? '✅' : v === 'rejected' ? '❌' : v === 'not_required' ? '—' : '⏳';
       const card = o => `
         <div class="panel" style="margin-top:8px" data-so="${e(o.id)}">
@@ -12744,11 +12838,37 @@ async function pgAdmin(app) {
             <button class="btn sm warn so-no">Отклонить</button>
           </div>
         </div>`;
+      const crCard = r => `
+        <div class="panel" style="margin-top:8px;background:#fffbeb;border:1px solid #fcd34d" data-creq="${e(r.id)}">
+          <div><b>${e(r.clubName)}</b> → новый главный тренер: <b>${e(r.name)}</b> <span class="muted small">(${r.age ? r.age + ' л., ' : ''}${e(r.nationality || 'гражданство не указано')})</span></div>
+          <div class="small muted" style="margin-top:3px">Текущий тренер: <b>${e(r.currentCoachName || 'Не назначен')}</b> (остаётся до одобрения)</div>
+          ${r.brief ? `<div class="small" style="margin-top:3px">📝 ${e(r.brief)}</div>` : ''}
+          <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap">
+            <input class="creq-reason" placeholder="Причина отказа (если отклонить)" style="width:200px;font-size:12px">
+            <button class="btn sm creq-ok">✅ Одобрить смену</button>
+            <button class="btn sm warn creq-no">❌ Отклонить</button>
+          </div>
+        </div>`;
       ab.insertAdjacentHTML('afterbegin', `
+        ${(cr.pending || []).length ? `
+        <div class="panel" style="margin-bottom:14px;border:1px solid #f59e0b">
+          <h3 style="margin:0">👔 Заявки на смену главного тренера (${cr.pending.length})</h3>
+          ${cr.pending.map(crCard).join('')}
+        </div>` : ''}
         <div class="panel" style="margin-bottom:14px">
           <h3 style="margin:0">🧑‍🏫 Заявки на тренеров и штаб${so.pending.length ? ` (${so.pending.length})` : ''}</h3>
           ${so.pending.length ? so.pending.map(card).join('') : '<p class="muted small" style="margin:6px 0 0">Новых заявок нет.</p>'}
         </div>`);
+      ab.querySelectorAll('[data-creq]').forEach(box => {
+        const requestId = box.dataset.creq;
+        const send = (action) => async () => {
+          const reason = box.querySelector('.creq-reason')?.value.trim() || '';
+          const r = await act(() => api('/admin/coach-request/respond', { requestId, action, reason }), res => res.message || (action === 'approve' ? 'Смена тренера одобрена' : 'Заявка отклонена'));
+          if (r) re();
+        };
+        box.querySelector('.creq-ok').onclick = send('approve');
+        box.querySelector('.creq-no').onclick = send('reject');
+      });
       ab.querySelectorAll('[data-so]').forEach(box => {
         const offerId = box.dataset.so;
         const go = (action, force, okMsg) => async () => {

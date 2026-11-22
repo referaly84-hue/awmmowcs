@@ -1571,6 +1571,7 @@ var ARRAYS = [
   { key: "budgetHistory", table: "budget_history", cols: [gen("team_id", "teamId")] },
   { key: "foreignOffers", table: "foreign_offers", cols: [gen("status", "status")] },
   { key: "staffOffers", table: "staff_offers", cols: [gen("status", "status")] },
+  { key: "coachRequests", table: "coach_requests", cols: [gen("status", "status")] },
   { key: "staffRoles", table: "staff_roles" },
   { key: "friendlyRequests", table: "friendly_requests", cols: [gen("status", "status")] }
 ];
@@ -6822,7 +6823,7 @@ function load() {
   if (!db.settings.squadSubmissions || typeof db.settings.squadSubmissions !== "object") {
     db.settings.squadSubmissions = {};
   }
-  for (const k of ["comps", "teams", "players", "fixtures", "derbies", "transfers", "llmlog", "tournaments", "transferRequests", "budgetHistory", "staffOffers", "staffRoles"]) {
+  for (const k of ["comps", "teams", "players", "fixtures", "derbies", "transfers", "llmlog", "tournaments", "transferRequests", "budgetHistory", "staffOffers", "coachRequests", "staffRoles"]) {
     if (!Array.isArray(db[k])) db[k] = [];
   }
   delete db.insiderPosts;
@@ -18255,6 +18256,7 @@ app.get("/api/club", needClub, (req, res) => {
     freeAgentsCount: (db.players || []).filter((p) => !p.teamId && !p.abroadClub).length,
     staffSlots: staffSlots(req.tid),
     staffOffers: staffOffersFor(req.tid),
+    coachRequests: coachRequestsFor(req.tid),
     family: sisterIdsOf(req.tid).map((id) => ({ id, name: tn(id), logo: teamLogo(id), comp: team(id)?.comp, compName: compOf(team(id)?.comp)?.name || team(id)?.comp || "" })),
     familyTeams: (() => {
       const fIds = clubFamilyOf(req.tid);
@@ -19371,6 +19373,7 @@ app.get("/api/admin/overview", admin, (req, res) => {
     models: effModels,
     log: db.llmlog.slice(-25).reverse(),
     pendingTransferRequestsCount: (db.transferRequests || []).filter((r) => r.status === "pending").length,
+    pendingCoachRequestsCount: (db.coachRequests || []).filter((r) => r.status === "pending").length,
     pendingFriendlyCount: (db.friendlyRequests || []).filter((r) => r.status === "pending" && r.date >= todayMsk()).length,
     transfers: (db.transfers || []).filter((t) => t.status === "pending").map((t) => ({
       ...t,
@@ -21727,12 +21730,30 @@ function roleMetaFor(tid, role) {
 }
 var roleValidFor = (tid, role) => STAFF_ROLE_LIST.includes(role) || customRolesOf(tid).some((r) => r.id === role);
 var isRoleRequired = (role) => REQUIRED_STAFF_ROLES.includes(role);
+function coachRequestView(r) {
+  const cur = r.clubId ? getCoachForTeam(r.clubId) : null;
+  const curName = cur && cur.name && cur.name !== "\u041D\u0435 \u043D\u0430\u0437\u043D\u0430\u0447\u0435\u043D" ? cur.name : "";
+  return {
+    ...r,
+    clubName: tn(r.clubId) || r.clubName || "",
+    clubLogo: teamLogo(r.clubId),
+    currentCoachName: curName || r.prevName || ""
+  };
+}
+function coachRequestsFor(tid) {
+  const mine = (db.coachRequests || []).filter((r) => r.clubId === tid).map(coachRequestView);
+  return {
+    pending: mine.filter((r) => r.status === "pending"),
+    history: mine.filter((r) => r.status !== "pending").slice(0, 10)
+  };
+}
 function staffSlots(tid) {
   const staff = getStaffForTeam(tid);
   const rolesList = [...STAFF_ROLE_LIST, ...customRolesOf(tid).map((r) => r.id)];
   return rolesList.map((role) => {
     const meta = roleMetaFor(tid, role) || {};
     const m = staff.find((x) => x.role === role) || null;
+    const pendingChange = (db.coachRequests || []).find((r) => r.clubId === tid && r.role === role && r.status === "pending");
     return {
       role,
       title: meta.title || role,
@@ -21740,6 +21761,8 @@ function staffSlots(tid) {
       desc: meta.desc || "",
       required: isRoleRequired(role),
       custom: !!meta.custom,
+      requiresApproval: role === "head",
+      pendingChange: pendingChange ? coachRequestView(pendingChange) : null,
       member: m ? { id: m.id, name: m.name, age: m.age, nationality: m.nationality, brief: m.brief || "", pending: !!m.pending } : null
     };
   });
@@ -21756,6 +21779,63 @@ app.post("/api/club/staff/set", needClub, (req, res) => {
   const meta = roleMetaFor(req.tid, role);
   if (!Array.isArray(db.staff)) db.staff = [];
   const prev = db.staff.find((x) => x.teamId === req.tid && x.role === role);
+
+  // Главный тренер не меняется сразу — заявка должна пройти одобрение администратора
+  if (role === "head") {
+    if (!Array.isArray(db.coachRequests)) db.coachRequests = [];
+    const ageVal = ageN >= 25 && ageN <= 85 ? Math.round(ageN) : void 0;
+    const natVal = nat || "";
+    const curCoach = getCoachForTeam(req.tid);
+    const curName = curCoach?.name && curCoach.name !== "\u041D\u0435 \u043D\u0430\u0437\u043D\u0430\u0447\u0435\u043D" ? curCoach.name : (prev?.name || "");
+    const existingPending = db.coachRequests.find((r) => r.clubId === req.tid && r.role === "head" && r.status === "pending");
+    if (
+      existingPending &&
+      existingPending.name.toLowerCase() === name.toLowerCase() &&
+      (existingPending.age || void 0) === ageVal &&
+      (existingPending.nationality || "") === natVal &&
+      (existingPending.brief || "") === brief
+    ) {
+      return fail(res, "\u0417\u0430\u044F\u0432\u043A\u0430 \u043D\u0430 \u044D\u0442\u043E\u0433\u043E \u0442\u0440\u0435\u043D\u0435\u0440\u0430 \u0443\u0436\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0430 \u0438 \u0436\u0434\u0451\u0442 \u0440\u0435\u0448\u0435\u043D\u0438\u044F \u0430\u0434\u043C\u0438\u043D\u0438\u0441\u0442\u0440\u0430\u0442\u043E\u0440\u0430");
+    }
+    for (const oldReq of db.coachRequests) {
+      if (oldReq.clubId === req.tid && oldReq.role === "head" && oldReq.status === "pending") {
+        oldReq.status = "cancelled";
+        oldReq.resolvedAt = (/* @__PURE__ */ new Date()).toISOString();
+        oldReq.rejectReason = "\u0417\u0430\u043C\u0435\u043D\u0435\u043D\u0430 \u043D\u043E\u0432\u043E\u0439 \u0437\u0430\u044F\u0432\u043A\u043E\u0439 \u043A\u043B\u0443\u0431\u0430";
+      }
+    }
+    const reqObj = {
+      id: "creq_" + uid(),
+      clubId: req.tid,
+      clubName: tm ? tm.name : "",
+      role: "head",
+      roleTitle: meta.title || "\u0413\u043B\u0430\u0432\u043D\u044B\u0439 \u0442\u0440\u0435\u043D\u0435\u0440",
+      prevStaffId: prev?.id || null,
+      prevName: curName,
+      name,
+      age: ageVal,
+      nationality: natVal,
+      brief,
+      status: "pending",
+      requestedBy: req.me?.role === "admin" ? "admin_cabinet" : "club",
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    db.coachRequests.unshift(reqObj);
+    save();
+    try {
+      tg(`\u{1F454} <b>${esc(tm?.name)}</b>: \u0437\u0430\u044F\u0432\u043A\u0430 \u043D\u0430 \u0441\u043C\u0435\u043D\u0443 \u0433\u043B\u0430\u0432\u043D\u043E\u0433\u043E \u0442\u0440\u0435\u043D\u0435\u0440\u0430 \u2014 <b>${esc(name)}</b>${curName ? ` (\u0432\u043C\u0435\u0441\u0442\u043E ${esc(curName)})` : ""}. \u041E\u0436\u0438\u0434\u0430\u0435\u0442 \u043E\u0434\u043E\u0431\u0440\u0435\u043D\u0438\u044F \u0430\u0434\u043C\u0438\u043D\u0438\u0441\u0442\u0440\u0430\u0442\u043E\u0440\u0430.`);
+    } catch {
+    }
+    return res.json({
+      ok: 1,
+      pendingApproval: true,
+      request: coachRequestView(reqObj),
+      staffSlots: staffSlots(req.tid),
+      coachRequests: coachRequestsFor(req.tid),
+      message: "\u0417\u0430\u044F\u0432\u043A\u0430 \u043D\u0430 \u0441\u043C\u0435\u043D\u0443 \u0442\u0440\u0435\u043D\u0435\u0440\u0430 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0430 \u0430\u0434\u043C\u0438\u043D\u0438\u0441\u0442\u0440\u0430\u0442\u043E\u0440\u0443. \u0414\u043E \u043E\u0434\u043E\u0431\u0440\u0435\u043D\u0438\u044F \u0442\u0440\u0435\u043D\u0435\u0440 \u043D\u0435 \u043C\u0435\u043D\u044F\u0435\u0442\u0441\u044F."
+    });
+  }
+
   db.staff = db.staff.filter((x) => !(x.teamId === req.tid && x.role === role));
   const member = {
     id: "staff_" + uid(),
@@ -21771,9 +21851,9 @@ app.post("/api/club/staff/set", needClub, (req, res) => {
     brief,
     pending: true,
     verified: false,
-    favoriteFormation: role === "head" ? "4-3-3" : void 0,
-    style: role === "head" ? "possession" : void 0,
-    styleTitle: role === "head" ? "\u0421\u0431\u0430\u043B\u0430\u043D\u0441\u0438\u0440\u043E\u0432\u0430\u043D\u043D\u044B\u0439 \u0441\u0442\u0438\u043B\u044C" : void 0,
+    favoriteFormation: void 0,
+    style: void 0,
+    styleTitle: void 0,
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   db.staff.push(member);
@@ -21784,6 +21864,86 @@ app.post("/api/club/staff/set", needClub, (req, res) => {
   } catch {
   }
   res.json({ ok: 1, member, staffSlots: staffSlots(req.tid) });
+});
+app.post("/api/club/staff/change-cancel", needClub, (req, res) => {
+  const reqId = String(req.body.requestId || "");
+  if (!Array.isArray(db.coachRequests)) db.coachRequests = [];
+  const list = db.coachRequests.filter((r) => r.clubId === req.tid && r.status === "pending" && (!reqId || r.id === reqId));
+  if (!list.length) return fail(res, "\u0410\u043A\u0442\u0438\u0432\u043D\u0430\u044F \u0437\u0430\u044F\u0432\u043A\u0430 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u0430");
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  for (const r of list) {
+    r.status = "cancelled";
+    r.resolvedAt = now;
+    r.rejectReason = "\u041E\u0442\u043E\u0437\u0432\u0430\u043D\u0430 \u043A\u043B\u0443\u0431\u043E\u043C";
+  }
+  save();
+  res.json({ ok: 1, staffSlots: staffSlots(req.tid), coachRequests: coachRequestsFor(req.tid), message: "\u0417\u0430\u044F\u0432\u043A\u0430 \u043D\u0430 \u0441\u043C\u0435\u043D\u0443 \u0442\u0440\u0435\u043D\u0435\u0440\u0430 \u043E\u0442\u043E\u0437\u0432\u0430\u043D\u0430" });
+});
+app.get("/api/admin/coach-requests", admin, (req, res) => {
+  const all = (db.coachRequests || []).map(coachRequestView);
+  res.json({
+    pending: all.filter((r) => r.status === "pending"),
+    history: all.filter((r) => r.status !== "pending").slice(0, 30)
+  });
+});
+app.post("/api/admin/coach-request/respond", admin, (req, res) => {
+  const { requestId, action, reason } = req.body;
+  const r = (db.coachRequests || []).find((x) => x.id === requestId);
+  if (!r || r.status !== "pending") return fail(res, "\u0417\u0430\u044F\u0432\u043A\u0430 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u0430 \u0438\u043B\u0438 \u0443\u0436\u0435 \u0440\u0430\u0441\u0441\u043C\u043E\u0442\u0440\u0435\u043D\u0430");
+  const tm = team(r.clubId);
+  if (!tm) return fail(res, "\u041A\u043B\u0443\u0431 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D");
+  if (action === "approve") {
+    if (!Array.isArray(db.staff)) db.staff = [];
+    const role = r.role || "head";
+    const meta = roleMetaFor(r.clubId, role) || STAFF_ROLES.head;
+    const prevList = db.staff.filter((x) => x.teamId === r.clubId && x.role === role);
+    db.staff = db.staff.filter((x) => !(x.teamId === r.clubId && x.role === role));
+    prevList.forEach((p) => cancelStaffOffersFor(p.id, "\u0421\u043F\u0435\u0446\u0438\u0430\u043B\u0438\u0441\u0442 \u0431\u043E\u043B\u044C\u0448\u0435 \u043D\u0435 \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442 \u0432 \u043A\u043B\u0443\u0431\u0435"));
+    if (role === "head" && db.coaches && !Array.isArray(db.coaches) && db.coaches[r.clubId]) {
+      delete db.coaches[r.clubId];
+    }
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const member = {
+      id: "staff_" + uid(),
+      name: r.name,
+      role,
+      roleTitle: meta.title || r.roleTitle || "\u0413\u043B\u0430\u0432\u043D\u044B\u0439 \u0442\u0440\u0435\u043D\u0435\u0440",
+      teamId: r.clubId,
+      teamName: tm.name || r.clubName || "",
+      age: r.age,
+      nationality: r.nationality || "",
+      specialty: "",
+      bio: "",
+      brief: r.brief || "",
+      pending: true,
+      verified: false,
+      favoriteFormation: role === "head" ? "4-3-3" : void 0,
+      style: role === "head" ? "possession" : void 0,
+      styleTitle: role === "head" ? "\u0421\u0431\u0430\u043B\u0430\u043D\u0441\u0438\u0440\u043E\u0432\u0430\u043D\u043D\u044B\u0439 \u0441\u0442\u0438\u043B\u044C" : void 0,
+      updatedAt: now
+    };
+    db.staff.push(member);
+    r.status = "approved";
+    r.resolvedAt = now;
+    r.resolvedBy = "admin";
+    r.appliedStaffId = member.id;
+    save();
+    try {
+      tg(`\u2705 \u0410\u0434\u043C\u0438\u043D\u0438\u0441\u0442\u0440\u0430\u0442\u043E\u0440 \u043E\u0434\u043E\u0431\u0440\u0438\u043B \u0441\u043C\u0435\u043D\u0443 \u0433\u043B\u0430\u0432\u043D\u043E\u0433\u043E \u0442\u0440\u0435\u043D\u0435\u0440\u0430 <b>${esc(tm.name)}</b>: <b>${esc(member.name)}</b>${r.prevName ? ` (\u0432\u043C\u0435\u0441\u0442\u043E ${esc(r.prevName)})` : ""}.`);
+    } catch {
+    }
+    return res.json({ ok: 1, approved: true, member, request: coachRequestView(r), message: `\u0421\u043C\u0435\u043D\u0430 \u0442\u0440\u0435\u043D\u0435\u0440\u0430 \u043E\u0434\u043E\u0431\u0440\u0435\u043D\u0430: ${member.name}` });
+  }
+  r.status = "rejected";
+  r.resolvedAt = (/* @__PURE__ */ new Date()).toISOString();
+  r.resolvedBy = "admin";
+  r.rejectReason = cleanStr(reason, 300) || "\u041E\u0442\u043A\u043B\u043E\u043D\u0435\u043D\u043E \u0430\u0434\u043C\u0438\u043D\u0438\u0441\u0442\u0440\u0430\u0442\u043E\u0440\u043E\u043C";
+  save();
+  try {
+    tg(`\u274C \u0410\u0434\u043C\u0438\u043D\u0438\u0441\u0442\u0440\u0430\u0442\u043E\u0440 \u043E\u0442\u043A\u043B\u043E\u043D\u0438\u043B \u0441\u043C\u0435\u043D\u0443 \u0433\u043B\u0430\u0432\u043D\u043E\u0433\u043E \u0442\u0440\u0435\u043D\u0435\u0440\u0430 <b>${esc(tm.name)}</b> (${esc(r.name)}). \u041F\u0440\u0435\u0436\u043D\u0438\u0439 \u0442\u0440\u0435\u043D\u0435\u0440 \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D.`);
+  } catch {
+  }
+  res.json({ ok: 1, rejected: true, request: coachRequestView(r), message: "\u0417\u0430\u044F\u0432\u043A\u0430 \u043E\u0442\u043A\u043B\u043E\u043D\u0435\u043D\u0430 \u2014 \u043F\u0440\u0435\u0436\u043D\u0438\u0439 \u0442\u0440\u0435\u043D\u0435\u0440 \u043E\u0441\u0442\u0430\u0451\u0442\u0441\u044F" });
 });
 app.post("/api/club/staff/remove", needClub, (req, res) => {
   const role = String(req.body.role || "");
