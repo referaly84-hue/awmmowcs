@@ -658,6 +658,152 @@ function computeMatchRatings(match, fixture, homeName, awayName) {
   );
   return ratings;
 }
+async function computeMatchRatingsWithAI(match, fixture, homeName, awayName) {
+  const baseRatings = computeMatchRatings(match, fixture, homeName, awayName);
+  if (!baseRatings.length || !hasLLM()) {
+    return { ratings: baseRatings, source: "formula", aiMotmId: null };
+  }
+  const ctx = match?.ctx || {};
+  const events = Array.isArray(match?.events) ? match.events : [];
+  const stats = match?.stats || fixture?.st || (ctx && events.length ? computeStats(events, ctx) : null);
+  const pStatsMap = stats?.players || {};
+  const homeScore = Number.isFinite(Number(stats?.teams?.home?.g)) ? Number(stats.teams.home.g) : Number(fixture?.hg ?? fixture?.final?.[0] ?? 0);
+  const awayScore = Number.isFinite(Number(stats?.teams?.away?.g)) ? Number(stats.teams.away.g) : Number(fixture?.ag ?? fixture?.final?.[1] ?? 0);
+
+  const ownGoalCount: Record<string, number> = {};
+  const bigMissCount: Record<string, number> = {};
+  const keyEvents: string[] = [];
+  for (const ev of events) {
+    const p0 = ev?.pids?.[0];
+    if (ev?.type === "own_goal" && p0) ownGoalCount[p0] = (ownGoalCount[p0] || 0) + 1;
+    if ((ev?.type === "miss" || ev?.type === "post") && p0 && Number(ev?.xg || 0) >= 0.25) {
+      bigMissCount[p0] = (bigMissCount[p0] || 0) + 1;
+    }
+    if ([
+      "goal", "own_goal", "penalty", "pen_goal", "pen_miss", "save",
+      "post", "red", "yellow", "var", "ref_error", "injury", "sub",
+      "pen_shootout_goal", "pen_shootout_save", "pen_shootout_miss"
+    ].includes(ev?.type) || ev?.disallowedGoal) {
+      const sideTag = ev.team === "home" ? homeName : ev.team === "away" ? awayName : "";
+      const txt = String(ev.text || "").replace(/\s+/g, " ").trim().slice(0, 140);
+      const pls = Array.isArray(ev.players) && ev.players.length ? ` [${ev.players.join(", ")}]` : "";
+      keyEvents.push(`${ev.min}' ${ev.type}${sideTag ? ` (${sideTag})` : ""}${pls}: ${txt}`);
+    }
+  }
+  const keySummary = keyEvents.length > 55
+    ? [...keyEvents.slice(0, 28), "... (пропущена середина)", ...keyEvents.slice(-27)]
+    : keyEvents;
+
+  const hT = stats?.teams?.home || {};
+  const aT = stats?.teams?.away || {};
+  const possH = Array.isArray(stats?.poss) ? stats.poss[0] : (hT.poss ?? 50);
+  const possA = Array.isArray(stats?.poss) ? stats.poss[1] : (100 - possH);
+  const penNote = fixture?.pen?.kicks?.length
+    ? `\nПослематчевая серия пенальти: ${homeName} ${fixture.pen.hg}:${fixture.pen.ag} ${awayName} (победил: ${fixture.pen.winner === "home" ? homeName : awayName})`
+    : "";
+
+  const playerLines = baseRatings.map((r) => {
+    const ps = pStatsMap[r.playerId] || {};
+    const og = ownGoalCount[r.playerId] || 0;
+    const bm = bigMissCount[r.playerId] || 0;
+    const en = ps.energySpent != null ? `${ps.energySpent}%` : "-";
+    return `${r.playerId} | ${r.name} | ${r.team} (${r.side}) | поз:${r.slotPos || r.pos} | мин:${r.min} | Г:${r.goals} А:${r.assists} | уд:${r.shots} xG:${r.xg} | отб:${r.tackles} сейв:${r.saves} сух:${r.cs} | фолы:${ps.ff || 0}/${ps.fa || 0} ЖК:${r.yc} КК:${r.rc}${og ? ` АГ:${og}` : ""}${bm ? ` упущ.момент:${bm}` : ""} | устал:${en}`;
+  });
+
+  const sys = `Ты — профессиональный футбольный аналитик (уровень SofaScore / WhoScored / Opta).
+В конце матча ты выставляешь справедливые, реалистичные индивидуальные оценки КАЖДОМУ футболисту, вышедшему на поле (строго по шкале от 4.0 до 10.0, шаг 0.1).
+
+ПРАВИЛА ОЦЕНИВАНИЯ:
+1. Ориентир для игрока основы за ровный, ничем не выдающийся матч: 6.4–6.8 (у победителей чуть выше ~6.6–7.1, у проигравших ниже ~5.9–6.5).
+2. Герои матча (победный гол/ассист, дубль, хет-трик, серия ключевых сейвов вратаря, доминирование в центре/обороне при победе): 7.8–9.7. 9.5–10.0 — только за исторический перформанс (хет-трик, 3+ Г+П, 8+ сейвов в победе на ноль).
+3. Сильный матч без голов/ассистов (много отборов/перехватов, высокий xG/активность, сухая надёжная оборона в победе/ничьей): 7.1–7.8.
+4. Запасные, вышедшие менее чем на 15–20 минут без результативных или грубых ошибок: нейтральная оценка 6.0–6.4. Если вышел и забил/отдал решающий пас — 7.1–8.4; если удалился/привёз гол — 4.5–5.5.
+5. Провальный матч (много пропущенных при слабой игре вратаря, красная карточка, автогол, упущенные явные моменты при высоком xG без голов, разгромное поражение с фолами): 4.2–5.8.
+6. Учитывай контекст: гол в проигранном 1:5 матче даёт меньше (напр. 6.9–7.3), чем победный гол в 1:0 (8.0–8.5); сухая победа повышает оценки защитникам и вратарю; разница в счёте, xG и ключевые события важнее сухой формулы.
+7. ОБЯЗАТЕЛЬНО верни оценку ДЛЯ КАЖДОГО playerId из списка участников без исключения.
+
+Верни строго один JSON-объект:
+{
+  "ratings": [
+    { "id": "точный_playerId", "rating": 7.4, "note": "коротко за что оценка (4–8 слов по-русски)" }
+  ],
+  "motmId": "playerId лучшего игрока матча"
+}`;
+
+  const user = `Матч: ${homeName} ${homeScore}:${awayScore} ${awayName}${penNote}
+Турнир: ${compName(fixture) || fixture?.comp || ""} · ${roundLabel(fixture) || ""}
+Схемы: ${homeName} (${ctx?.lineup?.home?.formation || "4-3-3"}) — ${awayName} (${ctx?.lineup?.away?.formation || "4-3-3"})
+Статистика команд:
+• ${homeName}: владение ${possH}%, удары ${hT.sh ?? 0} (в створ ${hT.sot ?? 0}), xG ${hT.xg ?? 0}, угл ${hT.co ?? 0}, отб ${hT.tk ?? 0}, фолы ${hT.fo ?? 0}
+• ${awayName}: владение ${possA}%, удары ${aT.sh ?? 0} (в створ ${aT.sot ?? 0}), xG ${aT.xg ?? 0}, угл ${aT.co ?? 0}, отб ${aT.tk ?? 0}, фолы ${aT.fo ?? 0}
+
+Ключевые события матча:
+${keySummary.length ? keySummary.join("\n") : "Спокойный матч без крупных инцидентов."}
+
+Участники матча (ОБЯЗАТЕЛЬНО оцени каждого):
+${playerLines.join("\n")}`;
+
+  try {
+    const res: any = await aiCtx.run({ ai: true, calls: 0, cap: 2 }, async () =>
+      llmJSON(sys, user, { task: "match-ratings", temp: 0.35, max: 3000 })
+    );
+    const items = Array.isArray(res) ? res : (Array.isArray(res?.ratings) ? res.ratings : []);
+    const byId = new Map<string, any>();
+    const byName = new Map<string, any>();
+    for (const it of items) {
+      if (!it || typeof it !== "object") continue;
+      const rid = String(it.id || it.playerId || it.pid || "").trim();
+      const rname = String(it.name || "").trim().toLowerCase();
+      if (rid) byId.set(rid, it);
+      if (rname) byName.set(rname, it);
+    }
+
+    let aiApplied = 0;
+    const merged = baseRatings.map((base) => {
+      const hit = byId.get(String(base.playerId)) || byName.get(String(base.name || "").trim().toLowerCase());
+      const rawVal = hit ? Number(hit.rating ?? hit.score) : NaN;
+      if (Number.isFinite(rawVal) && rawVal >= 1 && rawVal <= 10.5) {
+        aiApplied++;
+        const clamped = +clamp(rawVal, 4.0, 10.0).toFixed(1);
+        const note = String(hit.note || hit.reason || "").trim().slice(0, 140);
+        return {
+          ...base,
+          rating: clamped,
+          ...(note ? { reason: note } : {}),
+          source: "ai"
+        };
+      }
+      return base;
+    });
+
+    const aiMotmRaw = String(res?.motmId || "").trim();
+    const aiMotmId = merged.some((x) => String(x.playerId) === aiMotmRaw) ? aiMotmRaw : null;
+
+    merged.sort((a, b) =>
+      b.rating - a.rating ||
+      (aiMotmId ? ((String(b.playerId) === aiMotmId ? 1 : 0) - (String(a.playerId) === aiMotmId ? 1 : 0)) : 0) ||
+      b.goals - a.goals ||
+      b.assists - a.assists ||
+      b.saves - a.saves ||
+      b.tackles - a.tackles ||
+      b.min - a.min
+    );
+
+    return {
+      ratings: merged,
+      source: aiApplied > 0 ? "ai" : "formula",
+      aiMotmId
+    };
+  } catch (e: any) {
+    console.error("ИИ-оценки матча не получены, использован запасной расчёт:", e?.message || e);
+    return {
+      ratings: baseRatings,
+      source: "formula",
+      aiMotmId: null,
+      aiError: String(e?.message || e)
+    };
+  }
+}
 function stripOuterQuotes(s: string): string {
   let out = String(s || "").trim();
   for (let i = 0; i < 3; i++) {
@@ -922,8 +1068,11 @@ function getMatchMotm(match, fixture, homeName, awayName, coachHome, coachAway) 
   const hg = Number(fixture?.hg ?? match?.stats?.teams?.home?.g ?? 0);
   const ag = Number(fixture?.ag ?? match?.stats?.teams?.away?.g ?? 0);
   const winTid = hg > ag ? fixture?.home : (ag > hg ? fixture?.away : null);
+  const aiMotmId = match?.aiMotmId ? String(match.aiMotmId) : "";
+  const topRating = ratings.reduce((mx, r) => Math.max(mx, Number(r?.rating || 0)), 0);
   const best = [...ratings].sort((a, b) =>
     b.rating - a.rating ||
+    (aiMotmId && Math.abs(Number(b.rating || 0) - topRating) <= 0.1 ? ((String(b.playerId) === aiMotmId ? 1 : 0) - (String(a.playerId) === aiMotmId ? 1 : 0)) : 0) ||
     b.goals - a.goals ||
     b.assists - a.assists ||
     ((winTid && b.teamId === winTid ? 1 : 0) - (winTid && a.teamId === winTid ? 1 : 0)) ||
@@ -973,49 +1122,97 @@ function formatAwardMonthLabelRu(ym) {
 function awardPosBucket(pos) {
   const p = String(pos || "").toUpperCase();
   if (p === "ВР" || p === "GK") return "gk";
-  if (["ЦЗ", "ЛЗ", "ПЗ", "DEF", "CB", "LB", "RB"].includes(p)) return "def";
+  if (["ЦЗ", "ЛЗ", "ПЗ", "ЗАЩ", "DEF", "CB", "LB", "RB"].includes(p)) return "def";
   if (["ЛВ", "ПВ", "ЦФ", "НАП", "FWD", "ST", "LW", "RW"].includes(p)) return "fwd";
   return "mid";
 }
-function pickBestTeam11(candidates) {
-  if (!candidates.length) return [];
+function pickBestTeam11(candidates): { formation: string; starters: any[] } {
+  if (!candidates.length) return { formation: "4-3-3", starters: [] };
+  const candScore = (c) => Number(c?.score ?? c?.rating ?? c?.avgRating ?? 0);
   const sorted = [...candidates].sort((a, b) =>
-    (b.score ?? b.rating ?? b.avgRating ?? 0) - (a.score ?? a.rating ?? a.avgRating ?? 0) ||
+    candScore(b) - candScore(a) ||
     (b.g || 0) - (a.g || 0) ||
     (b.a || 0) - (a.a || 0) ||
     (b.sv || 0) - (a.sv || 0) ||
     (b.min || 0) - (a.min || 0)
   );
-  const used = new Set();
-  const pick = (bucket, count) => {
-    const res = [];
-    for (const c of sorted) {
-      if (res.length >= count) break;
-      const id = String(c.pid || c.playerId || c.name);
-      if (used.has(id)) continue;
-      if (awardPosBucket(c.pos) === bucket) {
-        used.add(id);
-        res.push(c);
-      }
-    }
-    return res;
-  };
-  const gks = pick("gk", 1);
-  const defs = pick("def", 4);
-  const mids = pick("mid", 3);
-  const fwds = pick("fwd", 3);
-  const starters = [...gks, ...defs, ...mids, ...fwds];
-  if (starters.length < 11) {
-    for (const c of sorted) {
-      if (starters.length >= 11) break;
-      const id = String(c.pid || c.playerId || c.name);
-      if (used.has(id)) continue;
-      if (awardPosBucket(c.pos) === "gk" && gks.length >= 1) continue;
-      used.add(id);
-      starters.push(c);
+  const deduped: any[] = [];
+  const seenIds = new Set<string>();
+  for (const c of sorted) {
+    const id = String(c.pid || c.playerId || c.name);
+    if (seenIds.has(id)) continue;
+    seenIds.add(id);
+    deduped.push(c);
+  }
+  const gkPool = deduped.filter((c) => awardPosBucket(c.pos) === "gk");
+  const defPool = deduped.filter((c) => awardPosBucket(c.pos) === "def");
+  const midPool = deduped.filter((c) => awardPosBucket(c.pos) === "mid");
+  const fwdPool = deduped.filter((c) => awardPosBucket(c.pos) === "fwd");
+
+  const gks = gkPool.slice(0, 1);
+
+  // Реалистичные футбольные схемы [защитники, полузащитники, нападающие] (в сумме 10 полевых)
+  // Перебираем все допустимые схемы и выбираем ту, которая даёт максимальный суммарный балл 10 лучших полевых
+  // без искусственного отбрасывания более сильных игроков ради жёсткого шаблона 4-3-3.
+  const FORMATIONS: Array<[number, number, number]> = [
+    [4, 3, 3],
+    [4, 4, 2],
+    [3, 5, 2],
+    [3, 4, 3],
+    [4, 5, 1],
+    [3, 6, 1],
+    [5, 3, 2],
+    [5, 4, 1],
+    [5, 2, 3],
+    [4, 2, 4]
+  ];
+
+  let bestCombo: { formation: string; defs: any[]; mids: any[]; fwds: any[]; total: number; contrib: number } | null = null;
+  for (const [d, m, f] of FORMATIONS) {
+    if (defPool.length < d || midPool.length < m || fwdPool.length < f) continue;
+    const defs = defPool.slice(0, d);
+    const mids = midPool.slice(0, m);
+    const fwds = fwdPool.slice(0, f);
+    const picked = [...defs, ...mids, ...fwds];
+    const total = +picked.reduce((s, c) => s + candScore(c), 0).toFixed(4);
+    const contrib = picked.reduce((s, c) => s + (c.g || 0) * 0.05 + (c.a || 0) * 0.03 + (c.min || 0) * 0.0001, 0);
+    if (
+      !bestCombo ||
+      total > bestCombo.total + 1e-6 ||
+      (Math.abs(total - bestCombo.total) <= 1e-6 && contrib > bestCombo.contrib + 1e-6)
+    ) {
+      bestCombo = { formation: `${d}-${m}-${f}`, defs, mids, fwds, total, contrib };
     }
   }
-  return starters;
+
+  if (bestCombo) {
+    return {
+      formation: bestCombo.formation,
+      starters: [...gks, ...bestCombo.defs, ...bestCombo.mids, ...bestCombo.fwds]
+    };
+  }
+
+  // Запасной вариант при неполном пуле игроков (например, в туре сыгран 1 матч и не хватает игроков одной линии)
+  const used = new Set<string>(gks.map((c) => String(c.pid || c.playerId || c.name)));
+  const outfield: any[] = [];
+  for (const c of deduped) {
+    if (outfield.length >= 10) break;
+    const id = String(c.pid || c.playerId || c.name);
+    if (used.has(id)) continue;
+    if (awardPosBucket(c.pos) === "gk" && gks.length >= 1) continue;
+    used.add(id);
+    outfield.push(c);
+  }
+  const defs = outfield.filter((c) => awardPosBucket(c.pos) === "def");
+  const mids = outfield.filter((c) => awardPosBucket(c.pos) === "mid");
+  const fwds = outfield.filter((c) => awardPosBucket(c.pos) === "fwd");
+  const fm = outfield.length === 10 && (defs.length + mids.length + fwds.length === 10)
+    ? `${defs.length}-${mids.length}-${fwds.length}`
+    : "4-3-3";
+  return {
+    formation: fm,
+    starters: [...gks, ...defs, ...mids, ...fwds]
+  };
 }
 function buildTeamOfRound(round, comp, fixtures, matchesMap, teamsMap) {
   const roundFx = (fixtures || []).filter((f) =>
@@ -1102,13 +1299,14 @@ function buildTeamOfRound(round, comp, fixtures, matchesMap, teamsMap) {
     }
   }
   const all = [...byPid.values()];
-  const starters = pickBestTeam11(all);
+  const picked = pickBestTeam11(all);
+  const starters = picked.starters;
   const best = [...all].sort((a, b) => b.rating - a.rating || b.g - a.g || b.a - a.a || b.sv - a.sv)[0] || null;
   const bestCoach = [...coachScores.values()].sort((a, b) => b.pts - a.pts)[0] || null;
   return {
     round,
     comp,
-    formation: "4-3-3",
+    formation: picked.formation,
     starters,
     players: starters,
     bestPlayer: best ? {
@@ -1219,14 +1417,15 @@ function buildTeamOfMonth(month, comp, fixtures, matchesMap, teamsMap, isSeason 
       stat: statParts.join(" · ")
     };
   });
-  const starters = pickBestTeam11(list);
+  const picked = pickBestTeam11(list);
+  const starters = picked.starters;
   const best = [...list].sort((a, b) => b.score - a.score || b.avgRating - a.avgRating || b.g - a.g)[0] || null;
   const bestCoach = [...coachMap.values()].sort((a, b) => b.pts - a.pts || (b.gf - b.ga) - (a.gf - a.ga) || b.gf - a.gf)[0] || null;
   return {
     month,
     monthLabel,
     comp,
-    formation: "4-3-3",
+    formation: picked.formation,
     starters,
     players: starters,
     bestPlayer: best ? {
@@ -12088,7 +12287,7 @@ async function runMatch(id, opts = {}) {
         f.pos = events.length;
         if (note) f.note = note;
         saveNow(true);
-        finish(id);
+        await finish(id);
         return;
       }
       const targetMs = realAt(f).getTime();
@@ -12193,7 +12392,14 @@ ${esc(compName(f))}, ${esc(roundLabel(f))}
       lastOwnerPing = now;
       pgRefreshOwner(id, INSTANCE_ID);
     }
-    if (curF.pos >= m.events.length) return finish(id);
+    if (curF.pos >= m.events.length) {
+      if (timers[id]) {
+        clearTimeout(timers[id]);
+        delete timers[id];
+      }
+      void finish(id);
+      return;
+    }
     const e = m.events[curF.pos++];
     if (e && e.i == null) e.i = curF.pos - 1;
     curF.hg = e.score[0];
@@ -12229,13 +12435,17 @@ function pushLive(id, obj) {
     }
   }
 }
-function finish(id) {
+var finishingMatches = new Set<string>();
+async function finish(id) {
+  if (finishingMatches.has(id)) return;
   if (timers[id]) {
     clearTimeout(timers[id]);
     delete timers[id];
   }
   const f = fx(id), m = getMatch(id);
   if (!f || !m || f.status === "done") return;
+  finishingMatches.add(id);
+  try {
   if (!m.light && Array.isArray(m.events) && (f.pos || 0) < m.events.length) {
     for (let idx = f.pos || 0; idx < m.events.length; idx++) {
       tgEvent(f, m.events[idx]);
@@ -12261,17 +12471,20 @@ function finish(id) {
   if (m.light) applyLightStats(f.st, m.lightStats, m.ctx);
   applyMatchEnergyToStats(f.st, m, f);
   m.stats = f.st;
-  const HName = tn(f.home), AName = tn(f.away);
-  const cH = getCoachForTeam(f.home), cA = getCoachForTeam(f.away);
-  m.ratings = computeMatchRatings(m, f, HName, AName);
-  m.motm = getMatchMotm(m, f, HName, AName, cH, cA);
-  if (m.motm) f.motm = { pid: m.motm.pid, name: m.motm.name, pos: m.motm.pos, teamId: m.motm.teamId, teamName: m.motm.teamName, rating: m.motm.rating };
   const hadPenBefore = !!f.pen;
   if ((f.comp === "cup" || f.comp === "supercup") && f.hg === f.ag && !f.pen) f.pen = shootout(f, m);
   checkPlayoffShootout(f, m);
   if (!hadPenBefore && f.pen?.kicks?.length) {
     appendShootoutEventsToMatch(f, m, true);
   }
+  const HName = tn(f.home), AName = tn(f.away);
+  const cH = getCoachForTeam(f.home), cA = getCoachForTeam(f.away);
+  const aiRatingRes = await computeMatchRatingsWithAI(m, f, HName, AName);
+  m.ratings = aiRatingRes.ratings;
+  m.ratingsSource = aiRatingRes.source;
+  if (aiRatingRes.aiMotmId) m.aiMotmId = aiRatingRes.aiMotmId;
+  m.motm = getMatchMotm(m, f, HName, AName, cH, cA);
+  if (m.motm) f.motm = { pid: m.motm.pid, name: m.motm.name, pos: m.motm.pos, teamId: m.motm.teamId, teamName: m.motm.teamName, rating: m.motm.rating };
   void putMatchNow(id, m);
   f.status = "done";
   if (Array.isArray(m.events) && m.events.length > 0) {
@@ -12428,6 +12641,9 @@ ${esc(db.settings.siteUrl)}/#/match/${id}` : ""}`);
   pushLive(id, { type: "end" });
   delete timers[id];
   void maybeSendRoundAwardsToTg(f);
+  } finally {
+    finishingMatches.delete(id);
+  }
 }
 function getShootoutParticipants(f: any, m: any, side: "home" | "away", rFn: () => number) {
   const tid = f[side];
@@ -23755,6 +23971,7 @@ export {
   buildUser,
   cardLine,
   computeMatchRatings,
+  computeMatchRatingsWithAI,
   computeLoanUntil,
   computeLightMatchProfile,
   computePlayerFatigue,
@@ -23789,6 +24006,7 @@ export {
   normalizeEvents,
   normalizeLoanUntil,
   normalizePlannedSubs,
+  pickBestTeam11,
   putMatch,
   realAt,
   reconcileLightGoals,

@@ -115,8 +115,8 @@ h3{font:600 15px Onest,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;marg
   .score .meta{font-size:11.5px}
   .t-logo.xl{width:56px;height:56px}
   .pitch-container{padding:14px 4px;margin:12px 0;border-radius:10px}
-  .pitch-row{margin:10px 0}
-  .pitch-player{min-width:54px}
+  .pitch-row{margin:10px 0;gap:2px}
+  .pitch-player{min-width:0;flex:1 1 0}
   .pitch-player-avatar{width:32px;height:32px}
   .pitch-player-avatar img{width:18px;height:18px}
   .pitch-player-rating{font-size:9px;padding:0 3px;top:-4px;right:-6px}
@@ -361,8 +361,8 @@ a.fxl{color:inherit}a.fxl:hover{background:var(--soft);text-decoration:none}
 .pitch-center-line{position:absolute;top:50%;left:0;right:0;height:2px;background:rgba(255,255,255,0.4);pointer-events:none}
 .pitch-penalty-top{position:absolute;top:0;left:50%;transform:translateX(-50%);width:180px;height:65px;border:2px solid rgba(255,255,255,0.4);border-top:0;pointer-events:none}
 .pitch-penalty-bottom{position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:180px;height:65px;border:2px solid rgba(255,255,255,0.4);border-bottom:0;pointer-events:none}
-.pitch-row{position:relative;z-index:2;display:flex;justify-content:space-around;align-items:center;margin:16px 0}
-.pitch-player{display:flex;flex-direction:column;align-items:center;text-align:center;min-width:76px}
+.pitch-row{position:relative;z-index:2;display:flex;justify-content:space-around;align-items:center;gap:6px;flex-wrap:wrap;margin:16px 0}
+.pitch-player{display:flex;flex-direction:column;align-items:center;text-align:center;min-width:68px;flex:1 1 0;max-width:120px}
 .pitch-player-avatar{position:relative;width:44px;height:44px;background:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,0.25);border:2px solid #ffd700}
 .pitch-player-avatar img{width:26px;height:26px;object-fit:contain}
 .pitch-player-rating{position:absolute;top:-6px;right:-10px;background:#ffd700;color:#453300;font:800 11px Onest,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:1px 5px;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.3)}
@@ -4233,10 +4233,11 @@ function paintMatch() {
     let playerSectionHtml = '';
     if (mStatsView === 'table') {
       playerSectionHtml = `<div class="panel wrap"><table><thead><tr><th class="l">Игрок</th><th>Оценка</th><th>Мин</th><th>Г</th><th>П</th><th>Уд</th><th>xG</th><th>Отб</th><th>Сейвы</th><th>Фолы</th><th>ЖК</th><th>КК</th></tr></thead><tbody>${pl.map(p => {
+        const rEntry = getRatingEntry(p.id, p);
         const ratNum = getRatNum(p.id, p);
         const rat = ratNum !== null ? ratNum.toFixed(1) : '—';
         const isMotm = isMotmPid(p.id, p.n);
-        return `<tr><td class="l">${isMotm ? '⭐ ' : ''}<b>${e(p.n)}</b> <span class="muted small">${p.side === 'home' ? e(M.fixture.homeName) : e(M.fixture.awayName)}</span></td><td><span class="tag" style="font-weight:700;${ratColorTag(ratNum)}">${rat}</span></td><td>${p.min}</td><td>${p.g}</td><td>${p.a}</td><td>${p.sh}</td><td>${p.xg}</td><td>${p.tk}</td><td>${p.sv}</td><td>${p.ff}/${p.fa}</td><td>${p.yc}</td><td>${p.rc}</td></tr>`;
+        return `<tr><td class="l">${isMotm ? '⭐ ' : ''}<b>${e(p.n)}</b> <span class="muted small">${p.side === 'home' ? e(M.fixture.homeName) : e(M.fixture.awayName)}</span></td><td><span class="tag" style="font-weight:700;${ratColorTag(ratNum)}"${rEntry?.reason ? ` title="${e(rEntry.reason)}"` : ''}>${rat}</span></td><td>${p.min}</td><td>${p.g}</td><td>${p.a}</td><td>${p.sh}</td><td>${p.xg}</td><td>${p.tk}</td><td>${p.sv}</td><td>${p.ff}/${p.fa}</td><td>${p.yc}</td><td>${p.rc}</td></tr>`;
       }).join('')}</tbody></table></div>`;
     } else {
       const subOutMin = {};
@@ -4377,6 +4378,7 @@ function paintMatch() {
         const sp = plById[mStatsSelPid];
         const lp = allLineupPlayers.find(x => x.id === mStatsSelPid);
         const sName = sp?.n || lp?.name || mStatsSelPid;
+        const rEntry = sp ? getRatingEntry(mStatsSelPid, sp) : null;
         const ratNum = sp ? getRatNum(mStatsSelPid, sp) : null;
         const motm = isMotmPid(mStatsSelPid, sName);
         selDetailHtml = `<div class="m-pitch-detail">
@@ -4388,6 +4390,7 @@ function paintMatch() {
             </div>
             <button type="button" class="btn alt sm" id="mstats_close_det">✕</button>
           </div>
+          ${rEntry?.reason ? `<div class="small muted" style="margin-bottom:8px">📝 <i>${e(rEntry.reason)}</i></div>` : ''}
           ${sp ? `<div class="row" style="gap:8px;flex-wrap:wrap;font-size:13px">
             <span class="tag">⏱️ Мин: <b>${sp.min}</b></span>
             <span class="tag">⚽ Голы: <b>${sp.g}</b></span>
@@ -5027,24 +5030,26 @@ function paintMatch() {
 }
 
 /* ───── тактическое футбольное поле для сборных ───── */
-function renderSoccerPitch11(players, coach) {
+function renderSoccerPitch11(players, coach, formation) {
   if (!players || !players.length) {
     return '<div class="empty panel">Символическая сборная формируется после сыгранных матчей.</div>';
   }
 
-  const gkList = players.filter(p => ['ВР', 'GK'].includes(p.pos));
-  const defOrder = { ЛЗ: 0, LB: 0, ЦЗ: 1, CB: 1, DEF: 1, ПЗ: 2, RB: 2 };
-  const midOrder = { ЛП: 0, ОП: 1, DM: 1, ЦП: 2, CM: 2, MID: 2, АП: 3, AM: 3, ПП: 4 };
+  const gkList = players.filter(p => ['ВР', 'GK'].includes(String(p.pos || '').toUpperCase()));
+  const defOrder = { ЛЗ: 0, LB: 0, ЦЗ: 1, ЗАЩ: 1, CB: 1, DEF: 1, ПЗ: 2, RB: 2 };
+  const midOrder = { ЛП: 0, LM: 0, ОП: 1, DM: 1, ЦП: 2, CM: 2, MID: 2, АП: 3, AM: 3, ПП: 4, RM: 4 };
   const fwdOrder = { ЛВ: 0, LW: 0, ЦФ: 1, НАП: 1, ST: 1, FWD: 1, ПВ: 2, RW: 2 };
-  const defList = players.filter(p => p.pos in defOrder).sort((a, b) => (defOrder[a.pos] ?? 1) - (defOrder[b.pos] ?? 1));
-  const midList = players.filter(p => p.pos in midOrder).sort((a, b) => (midOrder[a.pos] ?? 2) - (midOrder[b.pos] ?? 2));
-  const fwdList = players.filter(p => p.pos in fwdOrder).sort((a, b) => (fwdOrder[a.pos] ?? 1) - (fwdOrder[b.pos] ?? 1));
+  const defList = players.filter(p => !gkList.includes(p) && String(p.pos || '').toUpperCase() in defOrder).sort((a, b) => (defOrder[String(a.pos || '').toUpperCase()] ?? 1) - (defOrder[String(b.pos || '').toUpperCase()] ?? 1));
+  const midList = players.filter(p => !gkList.includes(p) && !defList.includes(p) && String(p.pos || '').toUpperCase() in midOrder).sort((a, b) => (midOrder[String(a.pos || '').toUpperCase()] ?? 2) - (midOrder[String(b.pos || '').toUpperCase()] ?? 2));
+  const fwdList = players.filter(p => !gkList.includes(p) && !defList.includes(p) && !midList.includes(p) && String(p.pos || '').toUpperCase() in fwdOrder).sort((a, b) => (fwdOrder[String(a.pos || '').toUpperCase()] ?? 1) - (fwdOrder[String(b.pos || '').toUpperCase()] ?? 1));
 
   const remaining = players.filter(p => !gkList.includes(p) && !defList.includes(p) && !midList.includes(p) && !fwdList.includes(p));
-  while (gkList.length < 1 && remaining.length) gkList.push(remaining.shift());
-  while (defList.length < 4 && remaining.length) defList.push(remaining.shift());
-  while (midList.length < 3 && remaining.length) midList.push(remaining.shift());
-  while (fwdList.length < 3 && remaining.length) fwdList.push(remaining.shift());
+  while (remaining.length) {
+    const rem = remaining.shift();
+    if (gkList.length < 1) gkList.push(rem);
+    else midList.push(rem);
+  }
+  const fmLabel = formation || `${defList.length}-${midList.length}-${fwdList.length}`;
 
   const pCard = p => {
     if (!p) return '<div class="pitch-player" style="visibility:hidden"></div>';
@@ -5081,19 +5086,12 @@ function renderSoccerPitch11(players, coach) {
     <div class="pitch-center-line"></div>
     <div class="pitch-penalty-top"></div>
     <div class="pitch-penalty-bottom"></div>
-    <!-- 3 НАПАДАЮЩИХ (FWD) -->
-    <div class="pitch-row">
-      ${(fwdList.slice(0, 3).length ? fwdList.slice(0, 3) : [null, null, null]).map(pCard).join('')}
+    <div style="position:relative;z-index:2;text-align:center;margin-bottom:8px">
+      <span style="display:inline-block;background:rgba(0,0,0,0.48);color:#fff;font:700 11.5px Onest,system-ui,sans-serif;padding:3px 11px;border-radius:12px;border:1px solid rgba(255,255,255,0.28)">Схема ${e(fmLabel)}</span>
     </div>
-    <!-- 3 ПОЛУЗАЩИТНИКА (MID) -->
-    <div class="pitch-row">
-      ${(midList.slice(0, 3).length ? midList.slice(0, 3) : [null, null, null]).map(pCard).join('')}
-    </div>
-    <!-- 4 ЗАЩИТНИКА (DEF) -->
-    <div class="pitch-row">
-      ${(defList.slice(0, 4).length ? defList.slice(0, 4) : [null, null, null, null]).map(pCard).join('')}
-    </div>
-    <!-- 1 ВРАТАРЬ (GK) -->
+    ${fwdList.length ? `<div class="pitch-row">${fwdList.map(pCard).join('')}</div>` : ''}
+    ${midList.length ? `<div class="pitch-row">${midList.map(pCard).join('')}</div>` : ''}
+    ${defList.length ? `<div class="pitch-row">${defList.map(pCard).join('')}</div>` : ''}
     <div class="pitch-row">
       ${pCard(gkList[0] || players[0])}
     </div>
@@ -5171,7 +5169,7 @@ async function pgLeaders(app) {
       </div>
       <p style="margin:8px 0 0;font-size:13.5px;color:var(--ink)">${e(tor.bestPlayer.reason || 'Ярчайшее индивидуальное выступление тура')}</p>
     </div>` : ''}
-    ${renderSoccerPitch11(tor?.starters || [], tor?.coachOfRound)}`;
+    ${renderSoccerPitch11(tor?.starters || [], tor?.coachOfRound, tor?.formation)}`;
   } else if (LD.tab === 'month') {
     const mData = await api(`/awards/month?comp=${LD.comp}${LD.month ? '&month=' + encodeURIComponent(LD.month) : ''}`);
     const months = mData.availableMonths || [];
@@ -5197,7 +5195,7 @@ async function pgLeaders(app) {
       </div>
       <p style="margin:8px 0 0;font-size:13.5px;color:var(--ink)">${e(tom.bestPlayer.reason || 'Стабильная игра высшего уровня на протяжении всего месяца')}</p>
     </div>` : ''}
-    ${renderSoccerPitch11(tom?.starters || [], tom?.coachOfMonth)}`;
+    ${renderSoccerPitch11(tom?.starters || [], tom?.coachOfMonth, tom?.formation)}`;
   } else if (LD.tab === 'season') {
     const sData = await api('/awards/season?comp=' + LD.comp);
     const ts = sData.topScorer, ta = sData.topAssister, bg = sData.bestGk, ps = sData.playerOfSeason, cs = sData.coachOfSeason;
@@ -5259,8 +5257,8 @@ async function pgLeaders(app) {
         ` : '<div class="muted small" style="margin-top:10px">Определяется по титулу</div>'}
       </div>
     </div>
-    <h3 style="margin:20px 0 10px">Сборная сезона (11 лучших игроков турнира по схеме 4-3-3)</h3>
-    ${renderSoccerPitch11(sData.teamOfSeason?.starters || [], cs)}`;
+    <h3 style="margin:20px 0 10px">Сборная сезона (11 лучших игроков турнира · схема ${e(sData.teamOfSeason?.formation || '4-3-3')})</h3>
+    ${renderSoccerPitch11(sData.teamOfSeason?.starters || [], cs, sData.teamOfSeason?.formation)}`;
   }
 
   app.innerHTML = `
